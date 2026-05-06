@@ -1,10 +1,9 @@
-import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 
-class Setting(BaseSettings):
+class Settings(BaseSettings):
     APP_PORT: int
 
     VITO_CLIENT_ID: str
@@ -16,4 +15,4 @@ class Setting(BaseSettings):
         )
 
 
-setting = Setting()
+setting = Settings()
