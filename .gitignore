@@ -1,4 +1,4 @@
 .env
 .venv
-venv_caremate/
+venv/
 app/__pycache__/
