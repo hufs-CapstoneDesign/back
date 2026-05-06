@@ -1,4 +1,8 @@
+__pycache__/
 .env
 .venv
+env/
 venv/
-app/__pycache__/
+ENV/
+env.bak/
+venv.bak/
