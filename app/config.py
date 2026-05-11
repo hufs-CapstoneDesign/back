@@ -8,6 +8,9 @@ class Settings(BaseSettings):
 
     VITO_CLIENT_ID: str
     VITO_CLIENT_SECRET: str
+    OPENAI_KEY: str
+    SUPABASE_URL: str
+    SUPABASE_KEY: str
 
 
     model_config = SettingsConfigDict(
@@ -15,4 +18,4 @@ class Settings(BaseSettings):
         )
 
 
-setting = Settings()
+settings = Settings()
