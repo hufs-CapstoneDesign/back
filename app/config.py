@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     OPENAI_KEY: str
     SUPABASE_URL: str
     SUPABASE_KEY: str
+    DATABASE_URL: str
 
 
     model_config = SettingsConfigDict(
