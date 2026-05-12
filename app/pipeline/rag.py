@@ -103,3 +103,28 @@ async def retrieve_context(
         context_parts.append(f"[과거 기록] {r}")
 
     return "\n".join(context_parts)
+
+async def save_to_working_memory(
+    session_id: str,
+    patient_id: str,
+    speaker: str,
+    raw_text: str,
+) -> None:
+    """발화마다 working_memory에 저장 + 임베딩"""
+    embedding = await get_embedding(raw_text)
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(text("""
+            INSERT INTO working_memory
+                (id, session_id, patient_id, speaker, raw_text, embedding, created_at)
+            VALUES
+                (gen_random_uuid(), CAST(:session_id AS uuid), CAST(:patient_id AS uuid),
+                 :speaker, :raw_text, CAST(:embedding AS vector), NOW())
+        """), {
+            "session_id": session_id,
+            "patient_id": patient_id,
+            "speaker": speaker,
+            "raw_text": raw_text,
+            "embedding": str(embedding),
+        })
+        await db.commit()
