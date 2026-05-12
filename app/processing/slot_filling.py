@@ -1,5 +1,7 @@
 import json
 from openai import AsyncOpenAI
+from sqlalchemy import text
+from app.database import AsyncSessionLocal
 from app.config import settings
 
 client = AsyncOpenAI(api_key=settings.OPENAI_KEY)
@@ -60,6 +62,25 @@ async def extract_slot(conversation: str) -> dict:
     result = json.loads(response.choices[0].message.content)
     return result
 
+async def save_slot_result(session_id: str, slot_result: dict) -> None:
+    """추출된 Slot 결과를 slot_results 테이블에 저장"""
+    async with AsyncSessionLocal() as db:
+        await db.execute(text("""
+            INSERT INTO slot_results
+                (id, session_id, medication, meal, status, confidence, source, created_at)
+            VALUES
+                (gen_random_uuid(), CAST(:session_id AS uuid),
+                 CAST(:medication AS jsonb), CAST(:meal AS jsonb), CAST(:status AS jsonb),
+                 :confidence, :source, NOW())
+        """), {
+            "session_id": session_id,
+            "medication": json.dumps(slot_result.get("medication", {}), ensure_ascii=False),
+            "meal": json.dumps(slot_result.get("meal", {}), ensure_ascii=False),
+            "status": json.dumps(slot_result.get("status", {}), ensure_ascii=False),
+            "confidence": slot_result.get("confidence", 0.0),
+            "source": slot_result.get("medication", {}).get("source", "unknown"),
+        })
+        await db.commit()
 
 def format_conversation(history: list[dict]) -> str:
     """대화 히스토리를 텍스트로 변환"""
