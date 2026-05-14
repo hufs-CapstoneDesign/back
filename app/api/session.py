@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 import uuid
 
 from app.database import get_db
-from app.models.session import Session  
+from app.models.session import Session
+from app.models.user import User
 
 router = APIRouter(tags=["calls"])
 
@@ -18,7 +19,7 @@ async def start_session(
         id=str(uuid.uuid4()),
         patient_id=patient_id,
         call_type=call_type,
-        started_at=datetime.now(timezone.utc),
+        started_at=datetime.utcnow(),  # 시간대 없이 timestamp로 처리
         ended_at=None,
         missed_count=0,
         emergency_sent=False,
@@ -28,5 +29,5 @@ async def start_session(
     await db.refresh(new_session)
 
     return {"session_id": f'{new_session.id}',
-            "websocket_url": f'/ws/calls/{new_session.id}'
+            "websocket_url": f'/ws/calls?session_id={new_session.id}'
             }    # 프론트에서 이 id로 WS 연결

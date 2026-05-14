@@ -4,7 +4,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from pgvector.sqlalchemy import Vector
 from datetime import datetime
-from database import Base
+from app.database import Base
 
 
 class WorkingMemory(Base):
