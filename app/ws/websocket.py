@@ -5,20 +5,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from app.database import get_db
-#from app.pipeline.stt import transcribe
+from app.pipeline.stt import transcribe
 from app.pipeline.orchestrator import run_pipeline
 
 router = APIRouter(tags=["ws"])
 
 SILENCE_TIMEOUT = 3  # 초 단위, 이 시간동안 추가 텍스트 없으면 파이프라인 실행
-
-
-async def transcribe(audio_data):
-    print(f"audio size: {len(audio_data)}")
-    return "안녕하세요 테스트입니다"
-
-
-
 
 async def get_patient_info(session_id: str, db: AsyncSession) -> dict:
     # 1. session_id로 patient_id 조회
