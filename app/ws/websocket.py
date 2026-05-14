@@ -3,10 +3,10 @@ import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import get_db
+from app.database import get_db
 
-from pipeline.stt import transcribe
-from pipeline.orchestrator import run_pipeline
+from app.pipeline.stt import transcribe
+from app.pipeline.orchestrator import run_pipeline
 
 
 router = APIRouter()
