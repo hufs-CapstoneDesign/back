@@ -3,7 +3,7 @@ from sqlalchemy import Text, DateTime, Integer, Date, ForeignKey
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime, date
-from database import Base
+from app.database import Base
 
 
 class RawArchive(Base):
