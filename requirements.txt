@@ -27,3 +27,4 @@ boto3==1.42.28
 # Utils
 python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
