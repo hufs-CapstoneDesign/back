@@ -125,7 +125,7 @@ async def voice_websocket(
                         conversation_history=[],
                         patient_profile=patient_profile,
                     )
-                    # 클라이언트에 응답 전송
+                    # 클라이언트에 응답 전송(LLM까지의 동작을 보기 위한 임시 response)
                     await websocket.send_json({
                         "type": "answer",
                         "text": result["ai_response"],
