@@ -7,6 +7,7 @@ from sqlalchemy import text
 from app.database import get_db
 from app.pipeline.stt import transcribe
 from app.pipeline.orchestrator import run_pipeline
+from app.pipeline.tts import stream_tts
 
 router = APIRouter(tags=["ws"])
 
@@ -118,12 +119,9 @@ async def voice_websocket(
                         patient_profile=patient_profile,
                     )
                     # 클라이언트에 응답 전송(LLM까지의 동작을 보기 위한 임시 response)
-                    await websocket.send_json({
-                        "type": "answer",
-                        "text": result["ai_response"],
-                        "corrected_text": result["corrected_text"],
-                        "rag_used": result["rag_used"],
-                    })
+                    async for audio_chunk in stream_tts(result["ai_response"]):
+                        await websocket.send_bytes(audio_chunk)
+
                 except Exception as e:
                     print(f"파이프라인 오류: {e}")
                 finally:

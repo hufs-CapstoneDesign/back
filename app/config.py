@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     SUPABASE_KEY: str
     DATABASE_URL: str
     ELEVENLABS_KEY: str
+    VOICE_ID: str
 
 
     model_config = SettingsConfigDict(
