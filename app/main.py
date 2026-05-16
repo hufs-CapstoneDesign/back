@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 import uvicorn
+from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.ws.websocket import router as ws_router
 from app.api.session import router as session_router
@@ -7,7 +8,17 @@ from app.api.auth import router as auth_router
 
 app = FastAPI(title="CareMate API")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 개발 중이니까 일단 전체 허용
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(auth_router)
+app.include_router(ws_router)
+app.include_router(session_router)
 
 if __name__ == "__main__":
     uvicorn.run(
@@ -16,6 +27,3 @@ if __name__ == "__main__":
         port=settings.APP_PORT,
         reload=True,
     )
-
-app.include_router(ws_router)
-app.include_router(session_router)
