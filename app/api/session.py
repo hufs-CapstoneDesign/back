@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 import uuid
 
+from app.config import settings
 from app.database import get_db
 from app.models.session import Session
 from app.models.user import User
@@ -34,7 +35,7 @@ async def start_session(
     await db.refresh(new_session)
 
     return {"session_id": f'{new_session.id}',
-            "websocket_url": f'/ws/calls?session_id={new_session.id}'
+            "websocket_url": f'{settings.WS_BASE_URL}{settings.APP_PORT}/ws/calls?session_id={new_session.id}'
             }    # 프론트에서 이 id로 WS 연결
 
 
