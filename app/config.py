@@ -5,6 +5,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 
 class Settings(BaseSettings):
     APP_PORT: int
+    WS_BASE_URL: str
 
     VITO_CLIENT_ID: str
     VITO_CLIENT_SECRET: str
