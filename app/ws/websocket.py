@@ -9,6 +9,9 @@ from app.pipeline.stt import transcribe
 from app.pipeline.orchestrator import run_pipeline
 from app.pipeline.tts import stream_tts
 
+# 프론트 테스트를 위한 임시 코드
+from app.utils.audio import convert_to_wav
+
 router = APIRouter(tags=["ws"])
 
 SILENCE_TIMEOUT = 3  # 초 단위, 이 시간동안 추가 텍스트 없으면 파이프라인 실행
@@ -72,7 +75,11 @@ async def voice_websocket(
         try:
             while True:
                 audio_chunk = await websocket.receive_bytes()
-                await audio_queue.put(audio_chunk)
+
+                # 프론트 테스트를 위한 임시 코드
+                wav_bytes = convert_to_wav(audio_chunk)
+
+                await audio_queue.put(wav_bytes)
         except WebSocketDisconnect:
             print("client disconnected")
         finally:

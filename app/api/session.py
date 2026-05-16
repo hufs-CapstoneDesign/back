@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
@@ -8,18 +9,21 @@ from app.database import get_db
 from app.models.session import Session
 from app.models.user import User
 
+class StartSessionRequest(BaseModel):
+    patient_id: str
+    call_type: str
+
 router = APIRouter(tags=["calls"])
 
 @router.post("/calls")
 async def start_session(
-    patient_id: str,
-    call_type: str,       # "scheduled" or "voluntary"
+    body: StartSessionRequest,
     db: AsyncSession = Depends(get_db),
 ):
     new_session = Session(
         id=str(uuid.uuid4()),
-        patient_id=patient_id,
-        call_type=call_type,
+        patient_id=body.patient_id,
+        call_type=body.call_type,
         started_at=datetime.utcnow(),  # 시간대 없이 timestamp로 처리
         ended_at=None,
         missed_count=0,
