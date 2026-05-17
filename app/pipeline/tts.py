@@ -56,3 +56,26 @@ async def stream_tts(text: str):
         raise RuntimeError(
             f"TTS 처리 중 오류 발생: {str(e)}"
         )
+    
+
+async def generate_tts(text: str) -> bytes:
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{settings.VOICE_ID}"
+    
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            url,
+            headers={
+                "xi-api-key": settings.ELEVENLABS_KEY,
+                "Content-Type": "application/json",
+            },
+            json={
+                "text": text,
+                "model_id": "eleven_flash_v2_5",
+                "output_format": "mp3_44100_128",
+                "voice_settings": {
+                    "stability": 0.5,
+                    "similarity_boost": 0.75,
+                },
+            },
+        )
+        return response.content
