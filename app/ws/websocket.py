@@ -167,6 +167,7 @@ async def voice_websocket(
                         "content": result["ai_response"],
                     })
 
+                    print("생성된 답변: ", result["ai_response"])
                     audio_bytes = await generate_tts(result["ai_response"])
                     await websocket.send_bytes(audio_bytes)
                     await websocket.send_text("END")
