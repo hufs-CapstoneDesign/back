@@ -1,5 +1,4 @@
 import asyncio
-
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -8,27 +7,26 @@ from app.database import get_db
 from app.pipeline.stt import transcribe
 from app.pipeline.orchestrator import run_pipeline
 from app.pipeline.tts import generate_tts
-
-# 프론트 테스트를 위한 임시 코드
+from app.pipeline.rag import save_to_working_memory, save_to_messages
+from app.processing.post_call import process_after_call
 from app.utils.audio import convert_to_wav
 
 router = APIRouter(tags=["ws"])
 
-SILENCE_TIMEOUT = 3  # 초 단위, 이 시간동안 추가 텍스트 없으면 파이프라인 실행
+SILENCE_TIMEOUT = 3
+
 
 async def get_patient_info(session_id: str, db: AsyncSession) -> dict:
-    # 1. session_id로 patient_id 조회
     session_result = await db.execute(text("""
         SELECT patient_id FROM sessions WHERE id = CAST(:session_id AS uuid)
     """), {"session_id": session_id})
-    
+
     session_row = session_result.fetchone()
     if not session_row:
         raise ValueError(f"세션을 찾을 수 없습니다: {session_id}")
-    
+
     patient_id = session_row[0]
 
-    # 2. patient_id로 환자 정보 조회
     patient_result = await db.execute(text("""
         SELECT 
             p.id,
@@ -52,10 +50,11 @@ async def get_patient_info(session_id: str, db: AsyncSession) -> dict:
         "name": patient_row[1],
         "birth_date": str(patient_row[2]) if patient_row[2] else None,
         "age": patient_row[3],
-        "cognitive_symptoms": patient_row[4],
-        "behavioral_symptoms": patient_row[5],
+        "cognitive_symptoms": patient_row[4] or [],
+        "behavioral_symptoms": patient_row[5] or [],
         "medical_notes": patient_row[6],
     }
+
 
 @router.websocket("/ws/calls")
 async def voice_websocket(
@@ -67,72 +66,129 @@ async def voice_websocket(
 
     audio_queue = asyncio.Queue()
     text_queue = asyncio.Queue()
-    stop_event = asyncio.Event()  # 연결 종료 신호
+    stop_event = asyncio.Event()
+
     patient_profile = await get_patient_info(session_id, db)
     patient_id = patient_profile.pop("patient_id")
+
+    # 대화 히스토리 — 통화 내내 누적
+    conversation_history = []
 
     async def receive_audio():
         try:
             while True:
                 audio_chunk = await websocket.receive_bytes()
-
-                # 프론트 테스트를 위한 임시 코드
                 wav_bytes = convert_to_wav(audio_chunk)
-
                 await audio_queue.put(wav_bytes)
         except WebSocketDisconnect:
-            print("client disconnected")
+            print("클라이언트 연결 종료")
         finally:
-            stop_event.set()  # 연결 끊기면 다른 태스크도 종료
+            stop_event.set()
 
     async def call_stt():
         try:
             while not stop_event.is_set():
                 try:
-                    audio_data = await asyncio.wait_for(audio_queue.get(), timeout=1.0)
-                    text = await transcribe(audio_data)  # transcribe가 sync면 run_in_executor 필요
+                    audio_data = await asyncio.wait_for(
+                        audio_queue.get(), timeout=1.0
+                    )
+                    text = await transcribe(audio_data)
                     if text:
                         await text_queue.put(text)
                 except asyncio.TimeoutError:
-                    continue  # 큐에 데이터 없으면 계속 대기
+                    continue
         except Exception as e:
             print(f"STT 오류: {e}")
 
     async def call_pipeline():
-        """
-        text_queue에서 텍스트를 모으다가
-        SILENCE_TIMEOUT 동안 추가 입력 없으면 파이프라인 실행
-        """
         accumulated_text = ""
 
         while not stop_event.is_set():
             try:
-                # SILENCE_TIMEOUT 안에 새 텍스트가 오면 계속 누적
-                text = await asyncio.wait_for(text_queue.get(), timeout=SILENCE_TIMEOUT)
+                text = await asyncio.wait_for(
+                    text_queue.get(), timeout=SILENCE_TIMEOUT
+                )
                 accumulated_text += " " + text
 
             except asyncio.TimeoutError:
-                # timeout 동안 추가 입력 없음 → 파이프라인 실행
                 if not accumulated_text.strip():
-                    continue  # 누적된 텍스트 없으면 그냥 대기
+                    continue
 
-                print(f"파이프라인 실행: {accumulated_text.strip()}")
+                raw_text = accumulated_text.strip()
+                print(f"파이프라인 실행: {raw_text}")
+
                 try:
+                    # 파이프라인 실행
                     result = await run_pipeline(
-                        raw_text=accumulated_text.strip(),
+                        raw_text=raw_text,
                         session_id=session_id,
                         patient_id=patient_id,
-                        conversation_history=[],
+                        conversation_history=conversation_history,
                         patient_profile=patient_profile,
                     )
+
+                    # messages 테이블에 저장 (대화 원본)
+                    await save_to_messages(
+                        session_id=session_id,
+                        patient_id=patient_id,
+                        sender_type="patient",
+                        content=raw_text,
+                        corrected_content=result["corrected_text"],
+                    )
+                    await save_to_messages(
+                        session_id=session_id,
+                        patient_id=patient_id,
+                        sender_type="ai",
+                        content=result["ai_response"],
+                    )
+
+                    # working_memory에 저장 (RAG용)
+                    await save_to_working_memory(
+                        session_id=session_id,
+                        patient_id=patient_id,
+                        speaker="patient",
+                        raw_text=result["corrected_text"],
+                    )
+                    await save_to_working_memory(
+                        session_id=session_id,
+                        patient_id=patient_id,
+                        speaker="ai",
+                        raw_text=result["ai_response"],
+                    )
+
+                    # 대화 히스토리 누적
+                    conversation_history.append({
+                        "role": "user",
+                        "content": result["corrected_text"],
+                    })
+                    conversation_history.append({
+                        "role": "assistant",
+                        "content": result["ai_response"],
+                    })
+
+                    # TTS 생성 후 프론트로 전송
                     audio_bytes = await generate_tts(result["ai_response"])
                     await websocket.send_bytes(audio_bytes)
                     await websocket.send_text("END")
 
                 except Exception as e:
                     print(f"파이프라인 오류: {e}")
+
                 finally:
-                    accumulated_text = ""  # 누적 텍스트 초기화
+                    accumulated_text = ""
+
+        # 통화 종료 후 배치 처리
+        if conversation_history:
+            print("통화 종료 — 배치 처리 시작")
+            try:
+                await process_after_call(
+                    session_id=session_id,
+                    patient_id=patient_id,
+                    conversation_history=conversation_history,
+                )
+                print("배치 처리 완료")
+            except Exception as e:
+                print(f"배치 처리 오류: {e}")
 
     await asyncio.gather(
         receive_audio(),
