@@ -6,7 +6,8 @@ BASE_URL = "http://localhost:8000"
 WS_URL = "ws://localhost:8000"
 
 PATIENT_ID = "6d3ef730-2ac9-4290-8db2-31859bcc49a5"
-AUDIO_FILE = "tests/audio/통화 - 복약yes.mp3"
+AUDIO_FILE = "tests/audio/통화3.mp3"
+
 
 async def test_full_pipeline():
     async with httpx.AsyncClient(timeout=30) as client:

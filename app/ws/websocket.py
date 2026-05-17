@@ -67,11 +67,11 @@ async def voice_websocket(
     audio_queue = asyncio.Queue()
     text_queue = asyncio.Queue()
     stop_event = asyncio.Event()
+    pipeline_done_event = asyncio.Event()  # 배치 처리 완료 신호
 
     patient_profile = await get_patient_info(session_id, db)
     patient_id = patient_profile.pop("patient_id")
 
-    # 대화 히스토리 — 통화 내내 누적
     conversation_history = []
 
     async def receive_audio():
@@ -84,6 +84,11 @@ async def voice_websocket(
             print("클라이언트 연결 종료")
         finally:
             stop_event.set()
+            # 파이프라인 완료 대기 (최대 60초)
+            try:
+                await asyncio.wait_for(pipeline_done_event.wait(), timeout=60)
+            except asyncio.TimeoutError:
+                print("배치 처리 타임아웃")
 
     async def call_stt():
         try:
@@ -118,7 +123,6 @@ async def voice_websocket(
                 print(f"파이프라인 실행: {raw_text}")
 
                 try:
-                    # 파이프라인 실행
                     result = await run_pipeline(
                         raw_text=raw_text,
                         session_id=session_id,
@@ -127,7 +131,6 @@ async def voice_websocket(
                         patient_profile=patient_profile,
                     )
 
-                    # messages 테이블에 저장 (대화 원본)
                     await save_to_messages(
                         session_id=session_id,
                         patient_id=patient_id,
@@ -142,7 +145,6 @@ async def voice_websocket(
                         content=result["ai_response"],
                     )
 
-                    # working_memory에 저장 (RAG용)
                     await save_to_working_memory(
                         session_id=session_id,
                         patient_id=patient_id,
@@ -156,7 +158,6 @@ async def voice_websocket(
                         raw_text=result["ai_response"],
                     )
 
-                    # 대화 히스토리 누적
                     conversation_history.append({
                         "role": "user",
                         "content": result["corrected_text"],
@@ -166,29 +167,31 @@ async def voice_websocket(
                         "content": result["ai_response"],
                     })
 
-                    # TTS 생성 후 프론트로 전송
                     audio_bytes = await generate_tts(result["ai_response"])
                     await websocket.send_bytes(audio_bytes)
                     await websocket.send_text("END")
 
                 except Exception as e:
                     print(f"파이프라인 오류: {e}")
-
                 finally:
                     accumulated_text = ""
 
         # 통화 종료 후 배치 처리
-        if conversation_history:
-            print("통화 종료 — 배치 처리 시작")
-            try:
+        print("통화 종료 — 배치 처리 시작")
+        try:
+            if conversation_history:
                 await process_after_call(
                     session_id=session_id,
                     patient_id=patient_id,
                     conversation_history=conversation_history,
                 )
                 print("배치 처리 완료")
-            except Exception as e:
-                print(f"배치 처리 오류: {e}")
+            else:
+                print("대화 내역 없음 — 배치 처리 생략")
+        except Exception as e:
+            print(f"배치 처리 오류: {e}")
+        finally:
+            pipeline_done_event.set()  # 배치 처리 완료 신호
 
     await asyncio.gather(
         receive_audio(),

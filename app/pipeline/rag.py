@@ -8,7 +8,9 @@ client = AsyncOpenAI(api_key=settings.OPENAI_KEY)
 TRIGGER_KEYWORDS = [
     "저번에", "그거", "아까", "거기", "지난번",
     "어제", "전에", "그때", "그분", "그사람",
-    "거기서", "저기", "요전에", "지지난"
+    "거기서", "저기", "요전에", "지지난",
+    "아들", "딸", "가족", "언제", "깜빡", "잊어버렸",
+    "뭐였지", "기억", "뭐라고", "했었나", "했나"
 ]
 
 
@@ -130,12 +132,14 @@ async def retrieve_context(
     session_id: str,
     patient_id: str,
 ) -> str | None:
-    if not should_trigger_rag(utterance):
-        return None
-
     query_embedding = await get_embedding(utterance)
 
-    wm_results = await search_working_memory(query_embedding, session_id)
+    # working_memory는 트리거 있을 때만
+    wm_results = []
+    if should_trigger_rag(utterance):
+        wm_results = await search_working_memory(query_embedding, session_id)
+
+    # long_term_memory는 항상 검색 (개인 정보 기반 응답)
     ltm_results = await search_long_term_memory(query_embedding, patient_id)
 
     if not wm_results and not ltm_results:
