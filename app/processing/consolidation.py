@@ -7,25 +7,21 @@ from app.config import settings
 client = AsyncOpenAI(api_key=settings.OPENAI_KEY)
 
 CONSOLIDATION_PROMPT = """다음은 치매 환자와 AI의 한 통화 대화입니다.
-이 대화에서 장기 기억으로 저장할 핵심 사실을 추출하세요.
+장기 기억으로 저장할 핵심 사실을 추출하세요.
 
 [규칙]
 1. 각 사실을 하나의 완성된 문장으로 작성하세요.
-2. 오늘 날짜를 포함하세요: {date}
+2. 오늘 날짜 포함: {date}
 3. 최대 5개 항목만 추출하세요.
 4. 대화에서 언급된 사실만 적으세요. 추측 금지.
 
-[출력 형식] JSON만 출력, 다른 텍스트 없이.
+[출력 형식] JSON만 출력.
 {{
   "facts": [
     {{
-      "content": "2026-05-12(월), 아침에 혈압약 복용 완료.",
-      "metadata": {{
-        "who": [],
-        "place": null,
-        "topic": "혈압약",
-        "emotion": null
-      }}
+      "content": "사실 문장",
+      "memory_type": "medication | meal | family | health | daily",
+      "metadata": {{"who": [], "place": null, "topic": null, "emotion": null}}
     }}
   ]
 }}
@@ -33,6 +29,7 @@ CONSOLIDATION_PROMPT = """다음은 치매 환자와 AI의 한 통화 대화입�
 [대화]
 {conversation}
 """
+
 
 async def get_embedding(text_input: str) -> list:
     response = await client.embeddings.create(
@@ -47,14 +44,9 @@ async def consolidate_to_long_term(
     patient_id: str,
     conversation: str,
 ) -> list[dict]:
-    """
-    통화 종료 후 Long-term Memory 이관
-    대화 → LLM 사실 추출 → 임베딩 → long_term_memory 저장
-    """
     from datetime import datetime
     today = datetime.now().strftime("%Y-%m-%d(%a)")
 
-    # LLM으로 핵심 사실 추출
     response = await client.chat.completions.create(
         model="gpt-4o",
         messages=[
@@ -75,22 +67,28 @@ async def consolidate_to_long_term(
 
     async with AsyncSessionLocal() as db:
         for fact in facts:
-            # 임베딩 생성
             embedding = await get_embedding(fact["content"])
 
-            # long_term_memory 저장
             await db.execute(text("""
                 INSERT INTO long_term_memory
-                    (id, patient_id, source_session_id, content, embedding, metadata, created_at)
+                    (id, patient_id, source_session_id,
+                     content, memory_content, memory_type,
+                     embedding, metadata, created_at)
                 VALUES
-                    (gen_random_uuid(), CAST(:patient_id AS uuid), CAST(:session_id AS uuid),
-                     :content, CAST(:embedding AS vector), CAST(:metadata AS jsonb), NOW())
+                    (gen_random_uuid(),
+                     CAST(:patient_id AS uuid),
+                     CAST(:session_id AS uuid),
+                     :content, :content, :memory_type,
+                     CAST(:embedding AS vector),
+                     CAST(:metadata AS jsonb),
+                     NOW())
             """), {
                 "patient_id": patient_id,
                 "session_id": session_id,
                 "content": fact["content"],
+                "memory_type": fact.get("memory_type", "daily"),
                 "embedding": str(embedding),
-                "metadata": json.dumps(fact["metadata"], ensure_ascii=False),
+                "metadata": json.dumps(fact.get("metadata", {}), ensure_ascii=False),
             })
 
         await db.commit()
