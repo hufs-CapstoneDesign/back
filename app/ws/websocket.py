@@ -7,7 +7,7 @@ from sqlalchemy import text
 from app.database import get_db
 from app.pipeline.stt import transcribe
 from app.pipeline.orchestrator import run_pipeline
-from app.pipeline.tts import stream_tts
+from app.pipeline.tts import generate_tts
 
 # 프론트 테스트를 위한 임시 코드
 from app.utils.audio import convert_to_wav
@@ -125,9 +125,9 @@ async def voice_websocket(
                         conversation_history=[],
                         patient_profile=patient_profile,
                     )
-                    # 클라이언트에 응답 전송(LLM까지의 동작을 보기 위한 임시 response)
-                    async for audio_chunk in stream_tts(result["ai_response"]):
-                        await websocket.send_bytes(audio_chunk)
+                    audio_bytes = await generate_tts(result["ai_response"])
+                    await websocket.send_bytes(audio_bytes)
+                    await websocket.send_text("END")
 
                 except Exception as e:
                     print(f"파이프라인 오류: {e}")
