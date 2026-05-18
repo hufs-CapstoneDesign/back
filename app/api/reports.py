@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
+from datetime import date
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -21,6 +22,7 @@ async def get_reports(
             meal_summary,
             physical_summary,
             call_summary,
+            daily_activity,
             session_count,
             last_updated
         FROM daily_reports
@@ -44,6 +46,7 @@ async def get_reports(
                 "meal": row.meal_summary,
                 "physical": row.physical_summary,
                 "call_summary": row.call_summary,
+                "daily_activity": row.daily_activity,
                 "session_count": row.session_count,
                 "last_updated": str(row.last_updated),
             }
@@ -55,7 +58,7 @@ async def get_reports(
 @router.get("/{patient_id}/{date}")
 async def get_report_by_date(
     patient_id: str,
-    date: str,
+    date: date,
     db: AsyncSession = Depends(get_db),
 ):
     """특정 날짜 보고서 조회"""
@@ -68,6 +71,7 @@ async def get_report_by_date(
             meal_summary,
             physical_summary,
             call_summary,
+            daily_activity,
             session_count,
             last_updated
         FROM daily_reports
@@ -88,6 +92,7 @@ async def get_report_by_date(
         "meal": row.meal_summary,
         "physical": row.physical_summary,
         "call_summary": row.call_summary,
+        "daily_activity": row.daily_activity,
         "session_count": row.session_count,
         "last_updated": str(row.last_updated),
     }

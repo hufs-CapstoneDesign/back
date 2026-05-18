@@ -35,6 +35,7 @@ SLOT_FILLING_PROMPT = """다음은 치매 환자와 AI의 대화입니다.
     "source": "direct | inferred | unknown"
   }},
   "emotion": "감정 상태 한 줄 또는 null",
+  "daily_activity": "오늘 한 일 또는 예정 일정 한 줄 또는 null",
   "call_summary": "통화 전체 요약 2~3문장",
   "confidence": 0.0
 }}
@@ -64,7 +65,6 @@ async def save_slot_result(
     patient_id: str,
     slot_result: dict,
 ) -> None:
-    """slot_results 테이블에 저장"""
     async with AsyncSessionLocal() as db:
         await db.execute(text("""
             INSERT INTO slot_results

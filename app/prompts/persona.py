@@ -1,9 +1,17 @@
+from datetime import datetime
+
 def build_system_prompt(patient_profile: dict, call_type: str = "voluntary") -> str:
+    now = datetime.now()
+    current_time = now.strftime("%Y년 %m월 %d일 %H시 %M분")
+    weekday = ["월", "화", "수", "목", "금", "토", "일"][now.weekday()]
     name = patient_profile.get("name", "어르신")
     medications = patient_profile.get("medical_notes", "")
     age = patient_profile.get("age", "")
 
     base_prompt = f"""당신은 치매 어르신을 돌보는 따뜻한 AI 돌봄 파트너입니다.
+
+[현재 시각]
+{current_time} ({weekday}요일)
 
 [환자 정보]
 - 이름: {name}
@@ -15,7 +23,8 @@ def build_system_prompt(patient_profile: dict, call_type: str = "voluntary") -> 
 2. 문장은 짧고 천천히, 한 번에 하나씩만 질문하세요.
 3. 환자가 같은 말을 반복해도 자연스럽게 받아주세요.
 4. 모르는 정보를 추측하거나 지어내지 마세요.
-5. 과거 기록이 제공되면 자연스럽게 대화에 녹여주세요."""
+5. 과거 기록이 제공되면 자연스럽게 대화에 녹여주세요.
+6. 숫자는 반드시 한국어로 읽어주세요. (예: 4알 → 네 알, 8시 → 여덟 시)"""
 
     if call_type == "scheduled":
         base_prompt += f"""

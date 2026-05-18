@@ -14,7 +14,7 @@ async def upsert_daily_report(
         result = await db.execute(text("""
             SELECT id, session_count,
                    medication_summary, meal_summary,
-                   physical_summary, call_summary
+                   physical_summary, call_summary, daily_activity
             FROM daily_reports
             WHERE patient_id = CAST(:patient_id AS uuid)
               AND report_date = :today
@@ -35,6 +35,10 @@ async def upsert_daily_report(
                 existing.physical_summary or {},
                 slot_result.get("physical", {})
             )
+            updated_activity = merge_text(
+                existing.daily_activity,
+                slot_result.get("daily_activity")
+            )
 
             await db.execute(text("""
                 UPDATE daily_reports
@@ -43,6 +47,7 @@ async def upsert_daily_report(
                     physical_summary    = CAST(:physical AS jsonb),
                     mood                = :emotion,
                     call_summary        = :call_summary,
+                    daily_activity      = :daily_activity,
                     session_count       = session_count + 1,
                     last_updated        = NOW()
                 WHERE patient_id = CAST(:patient_id AS uuid)
@@ -53,6 +58,7 @@ async def upsert_daily_report(
                 "physical": json.dumps(updated_physical, ensure_ascii=False),
                 "emotion": slot_result.get("emotion"),
                 "call_summary": slot_result.get("call_summary"),
+                "daily_activity": updated_activity,
                 "patient_id": patient_id,
                 "today": today,
             })
@@ -62,14 +68,14 @@ async def upsert_daily_report(
                 INSERT INTO daily_reports
                     (id, patient_id, report_date,
                      medication_summary, meal_summary, physical_summary,
-                     mood, call_summary,
+                     mood, call_summary, daily_activity,
                      medication_taken, session_count, last_updated, created_at)
                 VALUES
                     (gen_random_uuid(), CAST(:patient_id AS uuid), :today,
                      CAST(:medication AS jsonb),
                      CAST(:meal AS jsonb),
                      CAST(:physical AS jsonb),
-                     :emotion, :call_summary,
+                     :emotion, :call_summary, :daily_activity,
                      :medication_taken,
                      1, NOW(), NOW())
             """), {
@@ -80,6 +86,7 @@ async def upsert_daily_report(
                 "physical": json.dumps(slot_result.get("physical", {}), ensure_ascii=False),
                 "emotion": slot_result.get("emotion"),
                 "call_summary": slot_result.get("call_summary"),
+                "daily_activity": slot_result.get("daily_activity"),
                 "medication_taken": slot_result.get("medication", {}).get("taken"),
             })
 
@@ -106,4 +113,15 @@ def merge_meal(existing: dict, new: dict) -> dict:
             existing["menu"] = f"{prev}, {new['menu']}"
         else:
             existing["menu"] = new["menu"]
+    return existing
+
+
+def merge_text(existing: str | None, new: str | None) -> str | None:
+    """일정 정보 누적"""
+    if not existing:
+        return new
+    if not new:
+        return existing
+    if new not in existing:
+        return f"{existing} / {new}"
     return existing
