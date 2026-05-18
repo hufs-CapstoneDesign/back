@@ -18,7 +18,8 @@ SILENCE_TIMEOUT = 3
 
 async def get_patient_info(session_id: str, db: AsyncSession) -> dict:
     session_result = await db.execute(text("""
-        SELECT patient_id FROM sessions WHERE id = CAST(:session_id AS uuid)
+        SELECT patient_id, call_type FROM sessions 
+        WHERE id = CAST(:session_id AS uuid)
     """), {"session_id": session_id})
 
     session_row = session_result.fetchone()
@@ -26,6 +27,7 @@ async def get_patient_info(session_id: str, db: AsyncSession) -> dict:
         raise ValueError(f"세션을 찾을 수 없습니다: {session_id}")
 
     patient_id = session_row[0]
+    call_type = session_row[1] or "voluntary"  # 기본값
 
     patient_result = await db.execute(text("""
         SELECT 
@@ -53,6 +55,7 @@ async def get_patient_info(session_id: str, db: AsyncSession) -> dict:
         "cognitive_symptoms": patient_row[4] or [],
         "behavioral_symptoms": patient_row[5] or [],
         "medical_notes": patient_row[6],
+        "call_type": call_type,  # 추가
     }
 
 
@@ -71,6 +74,7 @@ async def voice_websocket(
 
     patient_profile = await get_patient_info(session_id, db)
     patient_id = patient_profile.pop("patient_id")
+    call_type = patient_profile.pop("call_type")
 
     conversation_history = []
 
@@ -129,6 +133,7 @@ async def voice_websocket(
                         patient_id=patient_id,
                         conversation_history=conversation_history,
                         patient_profile=patient_profile,
+                        call_type=call_type,
                     )
 
                     await save_to_messages(

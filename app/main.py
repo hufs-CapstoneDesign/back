@@ -5,6 +5,7 @@ from app.config import settings
 from app.ws.websocket import router as ws_router
 from app.api.session import router as session_router
 from app.api.auth import router as auth_router
+from app.api.reports import router as reports_router
 
 app = FastAPI(title="CareMate API")
 
@@ -19,6 +20,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(ws_router)
 app.include_router(session_router)
+app.include_router(reports_router)
 
 if __name__ == "__main__":
     uvicorn.run(
