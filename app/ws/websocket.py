@@ -75,6 +75,7 @@ async def voice_websocket(
     patient_profile = await get_patient_info(session_id, db)
     patient_id = patient_profile.pop("patient_id")
     call_type = patient_profile.pop("call_type")
+    print(f"call_type: {call_type}")
 
     conversation_history = []
 
