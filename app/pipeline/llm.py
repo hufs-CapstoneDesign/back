@@ -1,5 +1,7 @@
 from openai import AsyncOpenAI
 from app.config import settings
+from app.prompts.persona import build_system_prompt
+import json
 
 client = AsyncOpenAI(api_key=settings.OPENAI_KEY)
 
@@ -9,11 +11,12 @@ async def generate_response(
     conversation_history: list[dict],
     patient_profile: dict,
     rag_context: str | None = None,
+    call_type: str = "voluntary",
 ) -> str:
-    """텍스트 입력 → GPT-4o 응답 텍스트"""
+    system_prompt = build_system_prompt(patient_profile, call_type)
 
-    # 시스템 프롬프트 구성
-    system_prompt = build_system_prompt(patient_profile, rag_context)
+    if rag_context:
+        system_prompt += f"\n\n[관련 과거 기록]\n{rag_context}"
 
     messages = [{"role": "system", "content": system_prompt}]
     messages += conversation_history

@@ -9,17 +9,13 @@ async def run_pipeline(
     patient_id: str,
     conversation_history: list[dict],
     patient_profile: dict,
+    call_type: str = "voluntary",
 ) -> dict:
-    """
-    STT 이후 전체 파이프라인
-    raw_text → 1차 보정 → RAG → LLM → 응답
-    """
-
     # 1. 1차 발화 보정
     correction_result = await correct_first_pass(raw_text)
     corrected_text = correction_result["corrected"]
 
-    # 2. RAG 트리거 감지 + 컨텍스트 검색
+    # 2. RAG 검색
     rag_context = await retrieve_context(
         utterance=corrected_text,
         session_id=session_id,
@@ -32,6 +28,7 @@ async def run_pipeline(
         conversation_history=conversation_history,
         patient_profile=patient_profile,
         rag_context=rag_context,
+        call_type=call_type,
     )
 
     return {
