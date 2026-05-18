@@ -6,7 +6,7 @@ BASE_URL = "http://localhost:8000"
 WS_URL = "ws://localhost:8000"
 
 PATIENT_ID = "6d3ef730-2ac9-4290-8db2-31859bcc49a5"
-AUDIO_FILE = "tests/audio/통화3.mp3"
+AUDIO_FILE = "tests/audio/통화1.mp3"
 
 
 async def test_full_pipeline():
@@ -15,7 +15,7 @@ async def test_full_pipeline():
         print("=== 세션 시작 ===")
         response = await client.post(f"{BASE_URL}/calls", json={
             "patient_id": PATIENT_ID,
-            "call_type": "voluntary"
+            "call_type": "scheduled"
         })
         print(f"상태코드: {response.status_code}")
         session_data = response.json()
