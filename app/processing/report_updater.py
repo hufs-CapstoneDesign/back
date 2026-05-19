@@ -1,7 +1,7 @@
 import json
 from sqlalchemy import text
 from app.database import AsyncSessionLocal
-from datetime import date, datetime
+from datetime import date
 
 
 async def upsert_daily_report(
@@ -14,7 +14,7 @@ async def upsert_daily_report(
         result = await db.execute(text("""
             SELECT id, session_count,
                    medication_summary, meal_summary,
-                   physical_summary, call_summary, daily_activity
+                   physical_summary, call_summary
             FROM daily_reports
             WHERE patient_id = CAST(:patient_id AS uuid)
               AND report_date = :today
@@ -22,43 +22,47 @@ async def upsert_daily_report(
 
         existing = result.fetchone()
 
+        # 새 데이터 추출
+        new_medications = slot_result.get("medications", [])
+        new_meals = slot_result.get("meals", [])
+        new_physical = slot_result.get("analysis", {}).get("physical", {})
+        new_mood = slot_result.get("analysis", {}).get("mood", {}).get("status")
+        new_summary = slot_result.get("call_summary_sections", {})
+
         if existing:
-            updated_medication = merge_dict(
-                existing.medication_summary or {},
-                slot_result.get("medication", {})
-            )
-            updated_meal = merge_meal(
-                existing.meal_summary or {},
-                slot_result.get("meal", {})
-            )
-            updated_physical = merge_dict(
-                existing.physical_summary or {},
-                slot_result.get("physical", {})
-            )
-            updated_activity = merge_text(
-                existing.daily_activity,
-                slot_result.get("daily_activity")
-            )
+            # 기존 meals 병합 — 새로 확인된 정보만 업데이트
+            existing_meals = existing.meal_summary or []
+            if isinstance(existing_meals, str):
+                existing_meals = json.loads(existing_meals)
+            updated_meals = merge_time_list(existing_meals, new_meals, "time")
+
+            existing_meds = existing.medication_summary or []
+            if isinstance(existing_meds, str):
+                existing_meds = json.loads(existing_meds)
+            updated_meds = merge_time_list(existing_meds, new_medications, "time")
+
+            existing_summary = existing.call_summary or {}
+            if isinstance(existing_summary, str):
+                existing_summary = json.loads(existing_summary)
+            updated_summary = merge_summary(existing_summary, new_summary)
 
             await db.execute(text("""
                 UPDATE daily_reports
                 SET medication_summary  = CAST(:medication AS jsonb),
                     meal_summary        = CAST(:meal AS jsonb),
                     physical_summary    = CAST(:physical AS jsonb),
-                    mood                = :emotion,
-                    call_summary        = :call_summary,
-                    daily_activity      = :daily_activity,
+                    mood                = :mood,
+                    call_summary        = CAST(:call_summary AS jsonb),
                     session_count       = session_count + 1,
                     last_updated        = NOW()
                 WHERE patient_id = CAST(:patient_id AS uuid)
                   AND report_date = :today
             """), {
-                "medication": json.dumps(updated_medication, ensure_ascii=False),
-                "meal": json.dumps(updated_meal, ensure_ascii=False),
-                "physical": json.dumps(updated_physical, ensure_ascii=False),
-                "emotion": slot_result.get("emotion"),
-                "call_summary": slot_result.get("call_summary"),
-                "daily_activity": updated_activity,
+                "medication": json.dumps(updated_meds, ensure_ascii=False),
+                "meal": json.dumps(updated_meals, ensure_ascii=False),
+                "physical": json.dumps(new_physical, ensure_ascii=False),
+                "mood": new_mood,
+                "call_summary": json.dumps(updated_summary, ensure_ascii=False),
                 "patient_id": patient_id,
                 "today": today,
             })
@@ -68,60 +72,50 @@ async def upsert_daily_report(
                 INSERT INTO daily_reports
                     (id, patient_id, report_date,
                      medication_summary, meal_summary, physical_summary,
-                     mood, call_summary, daily_activity,
+                     mood, call_summary,
                      medication_taken, session_count, last_updated, created_at)
                 VALUES
                     (gen_random_uuid(), CAST(:patient_id AS uuid), :today,
                      CAST(:medication AS jsonb),
                      CAST(:meal AS jsonb),
                      CAST(:physical AS jsonb),
-                     :emotion, :call_summary, :daily_activity,
+                     :mood,
+                     CAST(:call_summary AS jsonb),
                      :medication_taken,
                      1, NOW(), NOW())
             """), {
                 "patient_id": patient_id,
                 "today": today,
-                "medication": json.dumps(slot_result.get("medication", {}), ensure_ascii=False),
-                "meal": json.dumps(slot_result.get("meal", {}), ensure_ascii=False),
-                "physical": json.dumps(slot_result.get("physical", {}), ensure_ascii=False),
-                "emotion": slot_result.get("emotion"),
-                "call_summary": slot_result.get("call_summary"),
-                "daily_activity": slot_result.get("daily_activity"),
-                "medication_taken": slot_result.get("medication", {}).get("taken"),
+                "medication": json.dumps(new_medications, ensure_ascii=False),
+                "meal": json.dumps(new_meals, ensure_ascii=False),
+                "physical": json.dumps(new_physical, ensure_ascii=False),
+                "mood": new_mood,
+                "call_summary": json.dumps(new_summary, ensure_ascii=False),
+                "medication_taken": any(
+                    m.get("taken") for m in new_medications if m.get("taken")
+                ),
             })
 
         await db.commit()
 
 
-def merge_dict(existing: dict, new: dict) -> dict:
-    if not existing:
-        return new
+def merge_time_list(existing: list, new: list, key: str) -> list:
+    """시간대별 리스트 병합 — 새로 확인된 정보만 업데이트"""
+    existing_map = {item.get(key): item for item in existing}
+    for item in new:
+        time_key = item.get(key)
+        if time_key and any(v is not None for k, v in item.items() if k != key):
+            existing_map[time_key] = item
+    return list(existing_map.values())
+
+
+def merge_summary(existing: dict, new: dict) -> dict:
+    """통화 요약 섹션 병합"""
+    result = existing.copy()
     for key, value in new.items():
-        if value is not None:
-            existing[key] = value
-    return existing
-
-
-def merge_meal(existing: dict, new: dict) -> dict:
-    if not existing:
-        return new
-    if new.get("eaten") is not None:
-        existing["eaten"] = new["eaten"]
-    if new.get("menu"):
-        prev = existing.get("menu", "")
-        if prev and new["menu"] not in prev:
-            existing["menu"] = f"{prev}, {new['menu']}"
-        else:
-            existing["menu"] = new["menu"]
-    return existing
-
-
-def merge_text(existing: str | None, new: str | None) -> str | None:
-    """일정 정보 누적"""
-    if not existing:
-        return new
-    if not new:
-        return existing
-    if new not in existing:
-        return f"{existing} / {new}"
-    return existing
+        if value:
+            if result.get(key):
+                result[key] = f"{result[key]} / {value}"
+            else:
+                result[key] = value
+    return result
