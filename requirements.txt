@@ -30,3 +30,4 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
 pydub==0.25.1
 static-ffmpeg==3.0
+firebase-admin==6.5.0

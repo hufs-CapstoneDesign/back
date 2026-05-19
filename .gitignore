@@ -111,6 +111,9 @@ env.bak/
 venv.bak/
 .venv/
 
+# firebase project
+*firebase*.json
+
 # Spyder project settings
 .spyderproject
 .spyproject
