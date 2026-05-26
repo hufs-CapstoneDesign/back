@@ -9,6 +9,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.session import Session
 from app.models.user import User
+from app.api.deps import get_current_user
 
 class StartSessionRequest(BaseModel):
     patient_id: str
@@ -20,6 +21,7 @@ router = APIRouter(tags=["calls"])
 async def start_session(
     body: StartSessionRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     new_session = Session(
         id=str(uuid.uuid4()),
@@ -43,6 +45,7 @@ async def start_session(
 async def end_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     result = await db.execute(text("""
         UPDATE sessions 
