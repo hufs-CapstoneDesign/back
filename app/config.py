@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     ELEVENLABS_KEY: str
     VOICE_ID: str
+    FIREBASE_CREDENTIALS_PATH: str
 
 
     model_config = SettingsConfigDict(
