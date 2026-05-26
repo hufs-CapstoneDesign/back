@@ -5,7 +5,7 @@ from app.database import AsyncSessionLocal
 from app.core.security import hash_password, verify_password, create_access_token
 from app.schemas.auth import (
     SignupRequest, LoginRequest,
-    ConnectPatientRequest, TokenResponse, UserResponse
+    ConnectPatientRequest, TokenResponse, UserResponse, FCMTokenRequest
 )
 from app.api.deps import get_current_user
 from fastapi import Depends
@@ -396,3 +396,46 @@ async def get_me(token_payload: dict = Depends(get_current_user)):
         role=user.role,
         guardian_id=None,
     )
+
+
+@router.post("/fcm-token")
+async def update_fcm_token(
+    request: FCMTokenRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """FCM 토큰 저장 - 로그인 후 호출"""
+    fcm_token = request.fcm_token
+    if not fcm_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="FCM 토큰이 없습니다.",
+        )
+
+    async with AsyncSessionLocal() as db:
+        try:
+            role = current_user["role"]
+            user_id = current_user["sub"]
+
+            if role == "patient":
+                await db.execute(text("""
+                    UPDATE patients
+                    SET fcm_token = :fcm_token, updated_at = NOW()
+                    WHERE user_id = CAST(:user_id AS uuid)
+                """), {"fcm_token": fcm_token, "user_id": user_id})
+
+            elif role == "guardian":
+                await db.execute(text("""
+                    UPDATE guardians
+                    SET fcm_token = :fcm_token, updated_at = NOW()
+                    WHERE user_id = CAST(:user_id AS uuid)
+                """), {"fcm_token": fcm_token, "user_id": user_id})
+
+            await db.commit()
+            return {"status": "ok"}
+
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"FCM 토큰 저장 중 오류가 발생했습니다: {str(e)}",
+            )

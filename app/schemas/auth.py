@@ -31,3 +31,7 @@ class UserResponse(BaseModel):
     name: str
     role: str
     guardian_id: str | None = None
+
+
+class FCMTokenRequest(BaseModel):
+    fcm_token: str
