@@ -59,7 +59,7 @@ async def create_schedule(
         VALUES (
             CAST(:id AS uuid),
             CAST(:patient_id AS uuid),
-            CAST(:scheduled_time AS time),
+            :scheduled_time,
             :days_of_week,
             TRUE,
             NOW(),
@@ -85,7 +85,7 @@ async def update_schedule(
 ):
     result = await db.execute(text("""
         UPDATE schedules
-        SET scheduled_time = CAST(:scheduled_time AS time),
+        SET scheduled_time = :scheduled_time,
             days_of_week = :days_of_week,
             updated_at = NOW()
         WHERE id = CAST(:schedule_id AS uuid)
