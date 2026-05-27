@@ -106,7 +106,6 @@ async def login(request: LoginRequest):
         name=user.name,
     )
 
-
 @router.post("/invite-patient", response_model=dict)
 async def invite_patient(
     request: dict,
@@ -114,100 +113,185 @@ async def invite_patient(
 ):
     """
     보호자가 새로운 환자를 초대
-    요청: {
-        "patient_name": "김순자",
-        "patient_phone": "010-9999-8888",
-        "birth_date": "1953-01-01",
-        "age": 71,
-        "cognitive_symptoms": ["기억력 장애"],
-        "behavioral_symptoms": ["오인"],
-        "relationship": "자녀"
+    요청:
+    {
+        "basic_info": {
+            "name": "김순자",
+            "age": 82,
+            "guardian_relationship": "자녀",
+            "patient_status": "경증",
+            "symptoms": ["지남력 장애", "환각"]
+        },
+        "familyMembers": [
+            {"name": "김순미", "relation": "동생"}
+        ],
+        "contacts": [
+            {"name": "김미미", "role": "친구", "nickname": "예삐할머니"}
+        ],
+        "medication": "하루 2회"
     }
     """
-    # 보호자만 호출 가능
     if current_user["role"] != "guardian":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="보호자만 접근할 수 있습니다.",
         )
-    
+
+    basic_info = request.get("basic_info", {})
+    family_members = request.get("familyMembers", [])
+    contacts = request.get("contacts", [])
+    medication = request.get("medication", "")
+
+    # 필수 값 확인
+    if not basic_info.get("name"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="환자 이름은 필수입니다.",
+        )
+
     async with AsyncSessionLocal() as db:
         try:
-            # 1. 환자용 임시 계정 생성
-            patient_user_id = str(uuid.uuid4())
-            # 임시 비밀번호 생성 (초대코드와 동일)
+            # 1. 초대 코드 생성
             invitation_code = str(uuid.uuid4())[:8].upper()
             temp_password = hash_password(invitation_code)
+            patient_user_id = str(uuid.uuid4())
 
+            # symptoms 분류 (일단 전부 cognitive_symptoms로 저장)
+            symptoms = basic_info.get("symptoms", [])
+
+            # 2. 환자 users 계정 생성
             await db.execute(text("""
-                INSERT INTO users (id, username, name, phone, password, role, profile, created_at, updated_at)
-                VALUES (CAST(:id AS uuid), :username, :name, :phone, :password, :role, '{}', NOW(), NOW())
+                INSERT INTO users (id, username, name, password, role, profile, created_at, updated_at)
+                VALUES (
+                    CAST(:id AS uuid),
+                    :username,
+                    :name,
+                    :password,
+                    'patient',
+                    '{}',
+                    NOW(), NOW()
+                )
             """), {
                 "id": patient_user_id,
-                "username": f"temp_{patient_user_id[:8]}",
-                "name": request.get("patient_name", ""),
-                "phone": request.get("patient_phone", ""),
+                "username": f"patient_{patient_user_id[:8]}",
+                "name": basic_info["name"],
                 "password": temp_password,
-                "role": "patient",
             })
 
-            # 2. 환자 상세 정보 저장
+            # 3. patients 테이블에 상세 정보 저장
             await db.execute(text("""
-                INSERT INTO patients (user_id, birth_date, age, cognitive_symptoms, behavioral_symptoms, created_at, updated_at)
+                INSERT INTO patients (
+                    user_id, age, cognitive_symptoms,
+                    medical_notes, created_at, updated_at
+                )
                 VALUES (
                     CAST(:user_id AS uuid),
-                    CAST(:birth_date AS date),
                     :age,
-                    :cognitive_symptoms,
-                    :behavioral_symptoms,
-                    NOW(),
-                    NOW()
+                    :symptoms,
+                    :medical_notes,
+                    NOW(), NOW()
                 )
             """), {
                 "user_id": patient_user_id,
-                "birth_date": request.get("birth_date"),
-                "age": request.get("age"),
-                "cognitive_symptoms": request.get("cognitive_symptoms"),
-                "behavioral_symptoms": request.get("behavioral_symptoms"),
+                "age": basic_info.get("age"),
+                "symptoms": symptoms,
+                "medical_notes": medication,
             })
 
-            # 3. 보호자 정보 업데이트
-            await db.execute(text("""
-                UPDATE guardians 
-                SET relationship = :relationship, updated_at = NOW()
-                WHERE user_id = CAST(:guardian_user_id AS uuid)
-            """), {
-                "relationship": request.get("relationship", ""),
-                "guardian_user_id": current_user["sub"],
-            })
-
-            # 4. patient_id와 guardian_id 조회
+            # 4. patient_id 조회
             patient_result = await db.execute(text("""
                 SELECT id FROM patients WHERE user_id = CAST(:user_id AS uuid)
             """), {"user_id": patient_user_id})
-            patient_id = patient_result.fetchone()[0]
+            patient_id = str(patient_result.fetchone()[0])
 
+            # 5. guardian_id 조회 + relationship 업데이트
             guardian_result = await db.execute(text("""
                 SELECT id FROM guardians WHERE user_id = CAST(:user_id AS uuid)
             """), {"user_id": current_user["sub"]})
-            guardian_id = guardian_result.fetchone()[0]
+            guardian_row = guardian_result.fetchone()
 
-            # 5. patient_guardians 관계 생성
+            if not guardian_row:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="보호자 정보를 찾을 수 없습니다.",
+                )
+
+            guardian_id = str(guardian_row[0])
+
             await db.execute(text("""
-                INSERT INTO patient_guardians (patient_id, guardian_id, invitation_code, status, invited_at, accepted_at, created_at, updated_at)
-                VALUES (CAST(:patient_id AS uuid), CAST(:guardian_id AS uuid), :code, 'accepted', NOW(), NOW(), NOW(), NOW())
+                UPDATE guardians
+                SET relationship = :relationship, updated_at = NOW()
+                WHERE user_id = CAST(:user_id AS uuid)
             """), {
-                "patient_id": str(patient_id),
-                "guardian_id": str(guardian_id),
+                "relationship": basic_info.get("guardian_relationship", ""),
+                "user_id": current_user["sub"],
+            })
+
+            # 6. patient_guardians 관계 생성
+            await db.execute(text("""
+                INSERT INTO patient_guardians (
+                    patient_id, guardian_id, invitation_code,
+                    status, invited_at, accepted_at, created_at, updated_at
+                )
+                VALUES (
+                    CAST(:patient_id AS uuid), CAST(:guardian_id AS uuid),
+                    :code, 'accepted', NOW(), NOW(), NOW(), NOW()
+                )
+            """), {
+                "patient_id": patient_id,
+                "guardian_id": guardian_id,
                 "code": invitation_code,
             })
+
+            # 7. 가족 구성원 caregivers 저장
+            for member in family_members:
+                if member.get("name"):
+                    await db.execute(text("""
+                        INSERT INTO caregivers (
+                            patient_id, name, role, nickname,
+                            created_at, updated_at
+                        )
+                        VALUES (
+                            CAST(:patient_id AS uuid),
+                            :name, :role, :nickname,
+                            NOW(), NOW()
+                        )
+                    """), {
+                        "patient_id": patient_id,
+                        "name": member.get("name", ""),
+                        "role": member.get("relation", "가족"),
+                        "nickname": member.get("nickname", ""),
+                    })
+
+            # 8. 지인/연락처 caregivers 저장
+            for contact in contacts:
+                if contact.get("name"):
+                    await db.execute(text("""
+                        INSERT INTO caregivers (
+                            patient_id, name, role, nickname,
+                            contact_info, created_at, updated_at
+                        )
+                        VALUES (
+                            CAST(:patient_id AS uuid),
+                            :name, :role, :nickname,
+                            :contact_info,
+                            NOW(), NOW()
+                        )
+                    """), {
+                        "patient_id": patient_id,
+                        "name": contact.get("name", ""),
+                        "role": contact.get("role", "지인"),
+                        "nickname": contact.get("nickname", ""),
+                        "contact_info": contact.get("contact_info", ""),
+                    })
 
             await db.commit()
 
             return {
+                "patient_id": patient_id,
                 "patient_user_id": patient_user_id,
                 "invitation_code": invitation_code,
-                "message": "환자가 성공적으로 등록되었습니다. 환자는 이 초대코드로 로그인할 수 있습니다."
+                "message": f"{basic_info['name']}님이 등록되었습니다. 초대코드로 로그인할 수 있습니다."
             }
 
         except HTTPException:

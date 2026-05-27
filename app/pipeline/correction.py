@@ -1,5 +1,6 @@
 from openai import AsyncOpenAI
 from app.config import settings
+from app.pipeline.confidence import calculate_confidence
 
 client = AsyncOpenAI(api_key=settings.OPENAI_KEY)
 
@@ -116,4 +117,16 @@ async def correct_second_pass(
 
     import json
     result = json.loads(response.choices[0].message.content)
+    final_confidence = calculate_confidence(
+    llm_confidence=result.get("confidence", 0.5),
+    utterance=corrected_text,
+    rag_used=rag_context is not None,
+    rag_hit=rag_context is not None and len(rag_context) > 20,
+    context_found=len(conversation_history) > 0,
+    profile_match=len(patient_profile.get("medications", [])) > 0,
+    )
+
+    result["llm_confidence"] = result.get("confidence", 0.5)
+    result["confidence"] = final_confidence
+
     return result
