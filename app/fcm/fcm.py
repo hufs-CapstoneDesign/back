@@ -13,9 +13,8 @@ async def send_call_notification(fcm_token: str, patient_id: str, schedule_id: s
     message = messaging.Message(
         token=fcm_token,
         data={
-            "type": "scheduled_call",
-            "patient_id": patient_id,
-            "schedule_id": schedule_id,
+            "type": "AI_CALL",
+            "call_type": "scheduled",
         },
         android=messaging.AndroidConfig(
             priority="high",  # 앱 꺼져있을 때도 즉시 전달
