@@ -10,15 +10,14 @@ from app.api.deps import get_current_user
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
 
-class ScheduleRequest(BaseModel):
-    patient_id: str
-    scheduled_time: str      # "HH:MM:SS" 형식
-    days_of_week: list[int]  # [0, 1, 2, 3, 4, 5, 6]
+class ScheduleItem(BaseModel):
+    day_of_week: int        # 0=월 ~ 6=일
+    call_time: str          # "HH:MM"
 
 
 class ScheduleUpdateRequest(BaseModel):
-    scheduled_time: str
-    days_of_week: list[int]
+    ai_call_enabled: bool
+    schedule_list: list[ScheduleItem]
 
 
 @router.get("/{patient_id}")
@@ -27,98 +26,90 @@ async def get_schedules(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    # ai_call_enabled 조회
+    patient_result = await db.execute(text("""
+        SELECT ai_call_enabled FROM patients
+        WHERE id = CAST(:patient_id AS uuid)
+    """), {"patient_id": patient_id})
+    patient_row = patient_result.fetchone()
+
+    if not patient_row:
+        raise HTTPException(status_code=404, detail="환자를 찾을 수 없습니다.")
+
+    # 스케줄 목록 조회
     result = await db.execute(text("""
-        SELECT id, scheduled_time, days_of_week, is_active
+        SELECT days_of_week, scheduled_time
         FROM schedules
         WHERE patient_id = CAST(:patient_id AS uuid)
+        AND is_active = TRUE
         ORDER BY scheduled_time
     """), {"patient_id": patient_id})
 
     rows = result.fetchall()
-    return [
-        {
-            "schedule_id": str(row[0]),
-            "scheduled_time": str(row[1]),
-            "days_of_week": row[2],
-            "is_active": row[3],
-        }
-        for row in rows
-    ]
+
+    schedule_list = []
+    for row in rows:
+        for day in row[0]:
+            schedule_list.append({
+                "day_of_week": day,
+                "call_time": str(row[1])[:5],  # "HH:MM"
+            })
+
+    return {
+        "ai_call_enabled": patient_row[0],
+        "schedule_list": schedule_list,
+    }
 
 
-@router.post("")
-async def create_schedule(
-    request: ScheduleRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    schedule_id = str(uuid.uuid4())
-
-    await db.execute(text("""
-        INSERT INTO schedules (id, patient_id, scheduled_time, days_of_week, is_active, created_at, updated_at)
-        VALUES (
-            CAST(:id AS uuid),
-            CAST(:patient_id AS uuid),
-            :scheduled_time,
-            :days_of_week,
-            TRUE,
-            NOW(),
-            NOW()
-        )
-    """), {
-        "id": schedule_id,
-        "patient_id": request.patient_id,
-        "scheduled_time": request.scheduled_time,
-        "days_of_week": request.days_of_week,
-    })
-
-    await db.commit()
-    return {"schedule_id": schedule_id, "status": "created"}
-
-
-@router.patch("/{schedule_id}")
-async def update_schedule(
-    schedule_id: str,
+@router.patch("/{patient_id}")
+async def update_schedules(
+    patient_id: str,
     request: ScheduleUpdateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    result = await db.execute(text("""
-        UPDATE schedules
-        SET scheduled_time = :scheduled_time,
-            days_of_week = :days_of_week,
-            updated_at = NOW()
-        WHERE id = CAST(:schedule_id AS uuid)
-        RETURNING id
+    # ai_call_enabled 업데이트
+    await db.execute(text("""
+        UPDATE patients
+        SET ai_call_enabled = :ai_call_enabled, updated_at = NOW()
+        WHERE id = CAST(:patient_id AS uuid)
     """), {
-        "schedule_id": schedule_id,
-        "scheduled_time": request.scheduled_time,
-        "days_of_week": request.days_of_week,
+        "ai_call_enabled": request.ai_call_enabled,
+        "patient_id": patient_id,
     })
 
-    row = result.fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="스케줄을 찾을 수 없습니다.")
-
-    await db.commit()
-    return {"schedule_id": schedule_id, "status": "updated"}
-
-
-@router.delete("/{schedule_id}")
-async def delete_schedule(
-    schedule_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    result = await db.execute(text("""
+    # 기존 스케줄 전부 삭제
+    await db.execute(text("""
         DELETE FROM schedules
-        WHERE id = CAST(:schedule_id AS uuid)
-        RETURNING id
-    """), {"schedule_id": schedule_id})
+        WHERE patient_id = CAST(:patient_id AS uuid)
+    """), {"patient_id": patient_id})
 
-    row = result.fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="스케줄을 찾을 수 없습니다.")
+    # 새 스케줄 삽입
+    # call_time이 같으면 days_of_week 배열로 묶기
+    time_to_days: dict[str, list[int]] = {}
+    for item in request.schedule_list:
+        if item.call_time not in time_to_days:
+            time_to_days[item.call_time] = []
+        time_to_days[item.call_time].append(item.day_of_week)
+
+    for call_time, days in time_to_days.items():
+        await db.execute(text("""
+            INSERT INTO schedules (id, patient_id, scheduled_time, days_of_week, is_active, created_at, updated_at)
+            VALUES (
+                CAST(:id AS uuid),
+                CAST(:patient_id AS uuid),
+                :scheduled_time,
+                :days_of_week,
+                TRUE,
+                NOW(),
+                NOW()
+            )
+        """), {
+            "id": str(uuid.uuid4()),
+            "patient_id": patient_id,
+            "scheduled_time": f"{call_time}:00",
+            "days_of_week": days,
+        })
 
     await db.commit()
-    return {"schedule_id": schedule_id, "status": "deleted"}
+    return {"status": "updated"}
