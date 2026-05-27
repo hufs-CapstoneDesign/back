@@ -40,6 +40,7 @@ async def process_after_call(
     print("[배치] 보고서 갱신 시작...")
     await upsert_daily_report(
         patient_id=patient_id,
+        session_id=session_id,  # ✅ 추가: 세션 ID 전달
         slot_result=slot_result,
     )
     print("[배치] 보고서 갱신 완료")

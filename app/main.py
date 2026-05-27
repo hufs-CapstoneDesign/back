@@ -8,6 +8,7 @@ from app.api.session import router as session_router
 from app.api.auth import router as auth_router
 from app.api.reports import router as reports_router
 from app.api.schedule import router as schedule_router
+from app.api.conversations import router as conversations_router
 from app.scheduler.scheduler import start_scheduler
 
 @asynccontextmanager
@@ -30,6 +31,7 @@ app.include_router(ws_router)
 app.include_router(session_router)
 app.include_router(reports_router)
 app.include_router(schedule_router)
+app.include_router(conversations_router)
 
 if __name__ == "__main__":
     uvicorn.run(
