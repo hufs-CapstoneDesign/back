@@ -78,6 +78,14 @@ async def update_schedules(
         "patient_id": patient_id,
     })
 
+    await db.execute(text("""
+        DELETE FROM scheduled_calls
+        WHERE schedule_id IN (
+            SELECT id FROM schedules
+            WHERE patient_id = CAST(:patient_id AS uuid)
+        )
+    """), {"patient_id": patient_id})
+
     # 기존 스케줄 전부 삭제
     await db.execute(text("""
         DELETE FROM schedules
