@@ -8,7 +8,7 @@ if not firebase_admin._apps:
     firebase_admin.initialize_app(cred)
 
 
-async def send_call_notification(fcm_token: str, patient_id: str, schedule_id: str):
+def send_call_notification(fcm_token: str):
     """환자에게 스케줄된 통화 FCM 발신"""
     message = messaging.Message(
         token=fcm_token,
@@ -16,8 +16,27 @@ async def send_call_notification(fcm_token: str, patient_id: str, schedule_id: s
             "type": "AI_CALL",
             "call_type": "scheduled",
         },
+        # notification=messaging.Notification( # ios 확장 시 수정
+        #     title="AI 전화",
+        #     body="전화가 왔습니다.",
+        # ),
         android=messaging.AndroidConfig(
-            priority="high",  # 앱 꺼져있을 때도 즉시 전달
+            priority="high",
+            ttl=0,
+            direct_boot_ok=True,
+            notification=messaging.AndroidNotification(
+                channel_id="default",
+                title="AI 전화",
+                body="전화가 왔습니다.",
+                sound="default",
+                click_action="OPEN_ACTIVITY_1",
+                sticky=True,
+                default_sound=True,
+                default_vibrate_timings=True
+            )
+        ),
+        apns=messaging.APNSConfig(
+            headers={"apns-priority": "10"},
         ),
     )
     response = messaging.send(message)
