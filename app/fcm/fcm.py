@@ -16,20 +16,17 @@ def send_call_notification(fcm_token: str):
             "type": "AI_CALL",
             "call_type": "scheduled",
         },
-        # notification=messaging.Notification( # ios 확장 시 수정
-        #     title="AI 전화",
-        #     body="전화가 왔습니다.",
-        # ),
+        notification=messaging.Notification(
+            title="AI 전화",
+            body="전화가 왔습니다.",
+        ),
         android=messaging.AndroidConfig(
             priority="high",
             ttl=0,
             direct_boot_ok=True,
             notification=messaging.AndroidNotification(
                 channel_id="default",
-                title="AI 전화",
-                body="전화가 왔습니다.",
                 sound="default",
-                click_action="OPEN_ACTIVITY_1",
                 sticky=True,
                 default_sound=True,
                 default_vibrate_timings=True
@@ -43,7 +40,7 @@ def send_call_notification(fcm_token: str):
     return response
 
 
-async def send_missed_call_notification(fcm_token: str, patient_name: str):
+def send_missed_call_notification(fcm_token: str, patient_name: str):
     """보호자에게 미수신 알림 FCM 발신"""
     message = messaging.Message(
         token=fcm_token,
