@@ -56,15 +56,21 @@ async def check_missed_call(scheduled_call_id: str, patient_id: str, fcm_token: 
             """), {"id": scheduled_call_id})
             await db.commit()
 
-            send_missed_call_notification(guardian_fcm_token, patient_name)
-            print(f"보호자 알림 발송: patient_id={patient_id}")
+            try:
+                send_missed_call_notification(guardian_fcm_token, patient_name)
+                print(f"보호자 알림 발송: patient_id={patient_id}")
+            except Exception as e:
+                print(f"보호자 알림 발송 실패: {e}")
         else:
-            # 재발신 → 5분 후
+            # 5분 후 재발신
             retry_time = datetime.now() + timedelta(minutes=5)
-            send_call_notification(fcm_token)
-            print(f"재발신: patient_id={patient_id}")
+            scheduler.add_job(
+                lambda: send_call_notification(fcm_token, call_type="scheduled"),
+                DateTrigger(run_date=retry_time),
+            )
+            print(f"재발신 예약: patient_id={patient_id}")
 
-            # 5분 후 다시 확인
+            # 재발신 후 5분 후 체크 (현재 기준 10분 후)
             scheduler.add_job(
                 check_missed_call,
                 DateTrigger(run_date=retry_time + timedelta(minutes=5)),
@@ -96,6 +102,7 @@ async def fire_scheduled_calls():
             AND s.scheduled_time = :current_time
             AND :current_dow = ANY(s.days_of_week)
             AND p.fcm_token IS NOT NULL
+            AND g.fcm_token IS NOT NULL
         """), {
             "current_time": current_time,
             "current_dow": current_dow,
@@ -124,7 +131,7 @@ async def fire_scheduled_calls():
 
             # FCM 발신
             try:
-                send_call_notification(fcm_token)
+                send_call_notification(fcm_token, call_type="requested")
                 print(f"FCM 발신 완료: patient_id={patient_id}")
             except Exception as e:
                 print(f"FCM 발신 실패: {e}")
@@ -136,6 +143,7 @@ async def fire_scheduled_calls():
                 DateTrigger(run_date=check_time),
                 args=[scheduled_call_id, patient_id, fcm_token, guardian_fcm_token, patient_name],
             )
+            print(f"5분 후 미수신 확인 job 등록: {check_time}")
 
 
 def start_scheduler():

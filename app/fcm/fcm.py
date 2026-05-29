@@ -8,13 +8,13 @@ if not firebase_admin._apps:
     firebase_admin.initialize_app(cred)
 
 
-def send_call_notification(fcm_token: str):
+def send_call_notification(fcm_token: str, call_type: str):
     """환자에게 스케줄된 통화 FCM 발신"""
     message = messaging.Message(
         token=fcm_token,
         data={
             "type": "AI_CALL",
-            "call_type": "scheduled",
+            "call_type": f'{call_type}',
         },
         notification=messaging.Notification(
             title="AI 전화",
@@ -42,6 +42,7 @@ def send_call_notification(fcm_token: str):
 
 def send_missed_call_notification(fcm_token: str, patient_name: str):
     """보호자에게 미수신 알림 FCM 발신"""
+    print(fcm_token)
     message = messaging.Message(
         token=fcm_token,
         notification=messaging.Notification(
