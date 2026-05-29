@@ -1,23 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
-from pydantic import BaseModel
 import uuid
 
 from app.database import get_db
 from app.api.deps import get_current_user
+from app.schemas.schedule import ScheduleUpdateRequest
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
-
-class ScheduleItem(BaseModel):
-    day_of_week: int        # 0=월 ~ 6=일
-    call_time: str          # "HH:MM"
-
-
-class ScheduleUpdateRequest(BaseModel):
-    ai_call_enabled: bool
-    schedule_list: list[ScheduleItem]
 
 
 @router.get("/{patient_id}")
