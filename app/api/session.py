@@ -21,6 +21,13 @@ async def start_session(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    result = await db.execute(text("""
+        SELECT id FROM patients WHERE id = CAST(:patient_id AS uuid)
+    """), {"patient_id": body.patient_id})
+
+    if not result.fetchone():
+        raise HTTPException(status_code=404, detail="존재하지 않는 환자입니다.")
+    
     new_session = Session(
         id=str(uuid.uuid4()),
         patient_id=body.patient_id,

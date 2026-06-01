@@ -7,7 +7,7 @@ from app.schemas.auth import (
     SignupRequest, LoginRequest,
     ConnectPatientRequest, TokenResponse, UserResponse, FCMTokenRequest
 )
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_guardian
 from fastapi import Depends
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -481,6 +481,44 @@ async def get_me(token_payload: dict = Depends(get_current_user)):
         guardian_id=None,
     )
 
+
+@router.get("/my-patients", response_model=list[dict])
+async def get_my_patients(
+    current_user: dict = Depends(require_guardian)
+):
+    """보호자의 연결된 환자 목록 및 patient_id 조회"""
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await db.execute(text("""
+                SELECT 
+                    p.id AS patient_id,
+                    u.name AS patient_name,
+                    u.username AS patient_username
+                FROM guardians g
+                JOIN patient_guardians pg ON g.id = pg.guardian_id
+                JOIN patients p ON pg.patient_id = p.id
+                JOIN users u ON p.user_id = u.id
+                WHERE g.user_id = CAST(:user_id AS uuid)
+                  AND pg.status = 'accepted'
+            """), {"user_id": current_user["sub"]})
+
+            rows = result.fetchall()
+
+            return [
+                {
+                    "patient_id": str(row.patient_id),
+                    "name": row.patient_name,
+                }
+                for row in rows
+            ]
+
+        except Exception as e:
+            print(f"환자 목록 조회 에러: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"환자 목록 조회 중 오류가 발생했습니다: {str(e)}",
+            )
+        
 
 @router.post("/fcm-token")
 async def update_fcm_token(
