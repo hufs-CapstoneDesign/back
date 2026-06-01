@@ -52,7 +52,7 @@ async def get_schedules(
     }
 
 
-@router.patch("/{patient_id}")
+@router.put("/{patient_id}")
 async def update_schedules(
     patient_id: str,
     request: ScheduleUpdateRequest,
