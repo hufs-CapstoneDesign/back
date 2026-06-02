@@ -4,20 +4,19 @@ from sqlalchemy import text
 import uuid
 
 from app.database import get_db
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_patient_id
 from app.schemas.schedule import ScheduleUpdateRequest
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
 
-
-@router.get("/{patient_id}")
+@router.get("")
 async def get_schedules(
-    patient_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    # ai_call_enabled 조회
+    patient_id = await get_patient_id(current_user, db)
+
     patient_result = await db.execute(text("""
         SELECT ai_call_enabled FROM patients
         WHERE id = CAST(:patient_id AS uuid)
@@ -27,7 +26,6 @@ async def get_schedules(
     if not patient_row:
         raise HTTPException(status_code=404, detail="환자를 찾을 수 없습니다.")
 
-    # 스케줄 목록 조회
     result = await db.execute(text("""
         SELECT days_of_week, scheduled_time
         FROM schedules
@@ -43,7 +41,7 @@ async def get_schedules(
         for day in row[0]:
             schedule_list.append({
                 "day_of_week": day,
-                "call_time": str(row[1])[:5],  # "HH:MM"
+                "call_time": str(row[1])[:5],
             })
 
     return {
@@ -52,14 +50,14 @@ async def get_schedules(
     }
 
 
-@router.put("/{patient_id}")
+@router.put("")
 async def update_schedules(
-    patient_id: str,
     request: ScheduleUpdateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    # ai_call_enabled 업데이트
+    patient_id = await get_patient_id(current_user, db)
+
     await db.execute(text("""
         UPDATE patients
         SET ai_call_enabled = :ai_call_enabled, updated_at = NOW()
@@ -77,14 +75,11 @@ async def update_schedules(
         )
     """), {"patient_id": patient_id})
 
-    # 기존 스케줄 전부 삭제
     await db.execute(text("""
         DELETE FROM schedules
         WHERE patient_id = CAST(:patient_id AS uuid)
     """), {"patient_id": patient_id})
 
-    # 새 스케줄 삽입
-    # call_time이 같으면 days_of_week 배열로 묶기
     time_to_days: dict[str, list[int]] = {}
     for item in request.schedule_list:
         if item.call_time not in time_to_days:
