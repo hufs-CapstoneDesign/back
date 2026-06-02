@@ -462,10 +462,26 @@ async def connect_patient(
 @router.get("/me", response_model=UserResponse)
 async def get_me(token_payload: dict = Depends(get_current_user)):
     """내 정보 조회"""
+
     async with AsyncSessionLocal() as db:
-        result = await db.execute(text("""
-            SELECT id, name, role FROM users WHERE id = CAST(:id AS uuid)
-        """), {"id": token_payload["sub"]})
+        result = await db.execute(
+            text("""
+                SELECT
+                    u.id AS user_id,
+                    u.name,
+                    u.role,
+                    p.id AS patient_id,
+                    g.id AS guardian_id
+                FROM users u
+                LEFT JOIN patients p
+                    ON p.user_id = u.id
+                LEFT JOIN guardians g
+                    ON g.user_id = u.id
+                WHERE u.id = CAST(:id AS uuid)
+            """),
+            {"id": token_payload["sub"]}
+        )
+
         user = result.fetchone()
 
     if not user:
@@ -475,10 +491,11 @@ async def get_me(token_payload: dict = Depends(get_current_user)):
         )
 
     return UserResponse(
-        user_id=str(user.id),
+        user_id=str(user.patient_id) if user.role == "patient"
+                else str(user.guardian_id),
         name=user.name,
         role=user.role,
-        guardian_id=None,
+        guardian_id=str(user.guardian_id) if user.guardian_id else None,
     )
 
 
