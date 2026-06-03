@@ -1,81 +1,50 @@
 import httpx
 from app.config import settings
 
-ELEVENLABS_API_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
+url = f"https://api.elevenlabs.io/v1/text-to-speech/{settings.VOICE_ID}/stream"
+
+def _tts_payload(text: str) -> dict:
+    return {
+        "text": text,
+        "model_id": "eleven_flash_v2_5",
+        "voice_settings": {
+            "stability": 0.5,
+            "similarity_boost": 0.75,
+        },
+    }
+
+def _tts_headers() -> dict:
+    return {
+        "xi-api-key": settings.ELEVENLABS_KEY,
+        "Content-Type": "application/json",
+    }
+
 
 async def stream_tts(text: str):
-    """
-    텍스트 → ElevenLabs TTS 스트리밍
-    mp3 chunk를 async generator로 yield
-    """
-    url = ELEVENLABS_API_URL.format(voice_id=settings.VOICE_ID)
-
+    """텍스트 → mp3 chunk async generator"""
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             async with client.stream(
                 "POST",
                 url,
-                headers={
-                    "xi-api-key": settings.ELEVENLABS_KEY,
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "text": text,
-                    "model_id": "eleven_flash_v2_5",  # 한국어 지원
-                    "output_format": "mp3_44100_128",
-                    "voice_settings": {
-                        "stability": 0.5,
-                        "similarity_boost": 0.75,
-                    },
-                },
+                headers=_tts_headers(),
+                json=_tts_payload(text),
+                params={"output_format": "mp3_44100_128"},
             ) as response:
-                
-                if response.status_code != 200:
-                    error_text = await response.aread()
-
-                    raise RuntimeError(
-                        f"ElevenLabs TTS 실패 "
-                        f"(status={response.status_code}): "
-                        f"{error_text.decode(errors='ignore')}"
-                    )
-
+                response.raise_for_status()
 
                 async for chunk in response.aiter_bytes(chunk_size=4096):
                     if chunk:
                         yield chunk
 
+    except httpx.HTTPStatusError as e:
+        raise RuntimeError(f"ElevenLabs TTS 실패 (status={e.response.status_code})")
     except httpx.TimeoutException:
         raise RuntimeError("ElevenLabs TTS timeout")
-
     except httpx.RequestError as e:
-        raise RuntimeError(
-            f"ElevenLabs 연결 실패: {str(e)}"
-        )
+        raise RuntimeError(f"ElevenLabs 연결 실패: {e}")
 
-    except Exception as e:
-        raise RuntimeError(
-            f"TTS 처리 중 오류 발생: {str(e)}"
-        )
-    
 
 async def generate_tts(text: str) -> bytes:
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{settings.VOICE_ID}"
-    
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(
-            url,
-            headers={
-                "xi-api-key": settings.ELEVENLABS_KEY,
-                "Content-Type": "application/json",
-            },
-            json={
-                "text": text,
-                "model_id": "eleven_flash_v2_5",
-                "output_format": "mp3_44100_128",
-                "voice_settings": {
-                    "stability": 0.5,
-                    "similarity_boost": 0.75,
-                },
-            },
-        )
-        return response.content
+    """stream_tts를 모아서 bytes로 반환 (배치 필요 시 사용)"""
+    return b"".join([chunk async for chunk in stream_tts(text)])

@@ -1,5 +1,12 @@
+import asyncio
+import json
 import httpx
+import websockets
 from app.config import settings
+
+VITO_WS_URL = "wss://openapi.vito.ai/v1/transcribe:streaming"
+SILENCE_THRESHOLD = 1.5
+NO_FINAL_TIMEOUT = 1.2
 
 
 async def get_vito_token() -> str:
@@ -14,48 +21,92 @@ async def get_vito_token() -> str:
         return response.json()["access_token"]
 
 
-async def transcribe(audio_bytes: bytes) -> str:
-    """음성 바이트 → 텍스트"""
+async def vito_streaming_stt(
+    audio_queue: asyncio.Queue,
+    text_queue: asyncio.Queue,
+    stop_event: asyncio.Event,
+    is_speaking: asyncio.Event,
+):
     token = await get_vito_token()
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(
-            "https://openapi.vito.ai/v1/transcribe",
-            headers={"Authorization": f"Bearer {token}"},
-            files={"file": ("audio.wav", audio_bytes, "audio/wav")},
-            data={
-                "config": '{"language":"ko","use_itn":true}'
-            }
-        )
-        result = response.json()
-        # 전사 ID 받아서 결과 polling
-        transcribe_id = result["id"]
-        return await poll_transcribe_result(client, token, transcribe_id)
+    params = (
+        "?sample_rate=16000"
+        "&encoding=LINEAR16"
+        "&use_itn=true"
+        "&use_disfluency_filter=true"
+        "&use_profanity_filter=false"
+    )
+    uri = f"{VITO_WS_URL}{params}"
+    headers = {"Authorization": f"Bearer {token}"}
 
+    async with websockets.connect(uri, additional_headers=headers) as ws:
 
-async def poll_transcribe_result(
-    client: httpx.AsyncClient,
-    token: str,
-    transcribe_id: str,
-) -> str:
-    """전사 완료될 때까지 polling"""
-    import asyncio
+        async def send_audio():
+            while not stop_event.is_set():
+                try:
+                    chunk = await asyncio.wait_for(audio_queue.get(), timeout=0.5)
+                    if is_speaking.is_set():
+                        continue
+                    await ws.send(chunk)
+                except asyncio.TimeoutError:
+                    continue
+            await ws.send("EOS")
 
-    for _ in range(30):  # 최대 30초 대기
-        response = await client.get(
-            f"https://openapi.vito.ai/v1/transcribe/{transcribe_id}",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        result = response.json()
+        async def receive_text():
+            utterance_buffer = []
+            pending_nonfinal = None
+            flush_task = None
+            fallback_task = None
 
-        if result["status"] == "completed":
-            # 전체 텍스트 합치기
-            utterances = result["results"]["utterances"]
-            return " ".join([u["msg"] for u in utterances])
+            def cancel_task(t):
+                if t and not t.done():
+                    t.cancel()
 
-        elif result["status"] == "failed":
-            raise Exception(f"STT 실패: {result}")
+            async def flush_after_silence():
+                await asyncio.sleep(SILENCE_THRESHOLD)
+                if utterance_buffer:
+                    full_text = " ".join(utterance_buffer)
+                    utterance_buffer.clear()
+                    print(f"[STT flush - normal] {full_text}")
+                    await text_queue.put(full_text)
 
-        await asyncio.sleep(1)
+            async def flush_after_no_final():
+                """폴백 경로: final=true 없이 NO_FINAL_TIMEOUT 초 경과 시 강제 flush"""
+                await asyncio.sleep(NO_FINAL_TIMEOUT)
+                nonlocal pending_nonfinal
+                if pending_nonfinal:
+                    text = pending_nonfinal
+                    pending_nonfinal = None
+                    combined = " ".join(utterance_buffer + [text]).strip()
+                    utterance_buffer.clear()
+                    print(f"[STT flush - fallback] {combined}")
+                    await text_queue.put(combined)
 
-    raise Exception("STT 타임아웃")
+            async for raw in ws:
+                print("VITO:", raw)
+                msg = json.loads(raw)
+
+                alternatives = msg.get("alternatives", [])
+                if not alternatives:
+                    continue
+
+                text = alternatives[0].get("text", "").strip()
+                if not text:
+                    continue
+
+                if msg.get("final"):
+                    pending_nonfinal = None
+                    cancel_task(fallback_task)
+
+                    utterance_buffer.append(text)
+
+                    cancel_task(flush_task)
+                    flush_task = asyncio.create_task(flush_after_silence())
+
+                else:
+                    pending_nonfinal = text
+
+                    cancel_task(fallback_task)
+                    fallback_task = asyncio.create_task(flush_after_no_final())
+
+        await asyncio.gather(send_audio(), receive_text())
