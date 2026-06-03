@@ -1,6 +1,7 @@
 from app.pipeline.correction import correct_first_pass
 from app.pipeline.rag import retrieve_context
-from app.pipeline.llm import generate_response
+from app.pipeline.llm import generate_response_stream
+from typing import AsyncGenerator
 
 
 async def run_pipeline(
@@ -10,7 +11,7 @@ async def run_pipeline(
     conversation_history: list[dict],
     patient_profile: dict,
     call_type: str = "voluntary",
-) -> dict:
+    ) -> AsyncGenerator[dict, None]:
     # 1. 1차 발화 보정
     correction_result = await correct_first_pass(raw_text)
     corrected_text = correction_result["corrected"]
@@ -23,18 +24,18 @@ async def run_pipeline(
     )
 
     # 3. LLM 답변 생성
-    ai_response = await generate_response(
+    yield {
+        "type": "meta",
+        "corrected_text": corrected_text,
+        "rag_used": rag_context is not None,
+        "rag_context": rag_context,
+    }
+
+    async for token in generate_response_stream(
         utterance=corrected_text,
         conversation_history=conversation_history,
         patient_profile=patient_profile,
         rag_context=rag_context,
         call_type=call_type,
-    )
-
-    return {
-        "raw_text": raw_text,
-        "corrected_text": corrected_text,
-        "rag_used": rag_context is not None,
-        "rag_context": rag_context,
-        "ai_response": ai_response,
-    }
+    ):
+        yield {"type": "token", "value": token}

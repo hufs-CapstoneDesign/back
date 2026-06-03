@@ -1,18 +1,18 @@
 from openai import AsyncOpenAI
 from app.config import settings
 from app.prompts.persona import build_system_prompt
-import json
+from typing import AsyncGenerator
 
 client = AsyncOpenAI(api_key=settings.OPENAI_KEY)
 
 
-async def generate_response(
+async def generate_response_stream(
     utterance: str,
     conversation_history: list[dict],
     patient_profile: dict,
     rag_context: str | None = None,
     call_type: str = "voluntary",
-) -> str:
+    ) -> AsyncGenerator[str, None]:
     system_prompt = build_system_prompt(patient_profile, call_type)
 
     if rag_context:
@@ -22,13 +22,17 @@ async def generate_response(
     messages += conversation_history
     messages.append({"role": "user", "content": utterance})
 
-    response = await client.chat.completions.create(
+    stream = await client.chat.completions.create(
         model="gpt-4o",
         messages=messages,
         max_tokens=300,
+        stream=True,
     )
 
-    return response.choices[0].message.content
+    async for chunk in stream:
+        token = chunk.choices[0].delta.content
+        if token is not None:
+            yield token
 
 
 def build_system_prompt(patient_profile: dict, rag_context: str | None) -> str:

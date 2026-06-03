@@ -4,16 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from app.database import get_db
-from app.pipeline.stt import transcribe
+from app.pipeline.stt import vito_streaming_stt
 from app.pipeline.orchestrator import run_pipeline
-from app.pipeline.tts import generate_tts
+from app.pipeline.tts import stream_tts
 from app.pipeline.rag import save_to_working_memory, save_to_messages
 from app.processing.post_call import process_after_call
-from app.utils.audio import convert_to_wav
 
 router = APIRouter(tags=["ws"])
-
-SILENCE_TIMEOUT = 3
 
 
 async def get_patient_info(session_id: str, db: AsyncSession) -> dict:
@@ -27,7 +24,7 @@ async def get_patient_info(session_id: str, db: AsyncSession) -> dict:
         raise ValueError(f"세션을 찾을 수 없습니다: {session_id}")
 
     patient_id = session_row[0]
-    call_type = session_row[1] or "voluntary"  # 기본값
+    call_type = session_row[1] or "voluntary"
 
     patient_result = await db.execute(text("""
         SELECT 
@@ -55,7 +52,7 @@ async def get_patient_info(session_id: str, db: AsyncSession) -> dict:
         "cognitive_symptoms": patient_row[4] or [],
         "behavioral_symptoms": patient_row[5] or [],
         "medical_notes": patient_row[6],
-        "call_type": call_type,  # 추가
+        "call_type": call_type,
     }
 
 
@@ -70,7 +67,8 @@ async def voice_websocket(
     audio_queue = asyncio.Queue()
     text_queue = asyncio.Queue()
     stop_event = asyncio.Event()
-    pipeline_done_event = asyncio.Event()  # 배치 처리 완료 신호
+    pipeline_done_event = asyncio.Event()
+    is_speaking = asyncio.Event()
 
     patient_profile = await get_patient_info(session_id, db)
     patient_id = patient_profile.pop("patient_id")
@@ -82,107 +80,122 @@ async def voice_websocket(
     async def receive_audio():
         try:
             while True:
-                audio_chunk = await websocket.receive_bytes()
-                wav_bytes = convert_to_wav(audio_chunk)
-                await audio_queue.put(wav_bytes)
+                chunk = await websocket.receive_bytes()
+                await audio_queue.put(chunk)
         except WebSocketDisconnect:
             print("클라이언트 연결 종료")
         finally:
             stop_event.set()
-            # 파이프라인 완료 대기 (최대 60초)
             try:
                 await asyncio.wait_for(pipeline_done_event.wait(), timeout=60)
             except asyncio.TimeoutError:
                 print("배치 처리 타임아웃")
 
     async def call_stt():
-        try:
-            while not stop_event.is_set():
-                try:
-                    audio_data = await asyncio.wait_for(
-                        audio_queue.get(), timeout=1.0
-                    )
-                    text = await transcribe(audio_data)
-                    if text:
-                        await text_queue.put(text)
-                except asyncio.TimeoutError:
-                    continue
-        except Exception as e:
-            print(f"STT 오류: {e}")
+        await vito_streaming_stt(audio_queue, text_queue, stop_event, is_speaking)
 
     async def call_pipeline():
-        accumulated_text = ""
-
-        while not stop_event.is_set():
+        while not stop_event.is_set() or not text_queue.empty():
             try:
-                text = await asyncio.wait_for(
-                    text_queue.get(), timeout=SILENCE_TIMEOUT
+                raw_text = await asyncio.wait_for(
+                    text_queue.get(), timeout=1.0
                 )
-                accumulated_text += " " + text
-
             except asyncio.TimeoutError:
-                if not accumulated_text.strip():
-                    continue
+                continue
 
-                raw_text = accumulated_text.strip()
-                print(f"파이프라인 실행: {raw_text}")
+            is_speaking.set()
+            await websocket.send_text("MIC_OFF")
+            print(f"파이프라인 실행: {raw_text}")
 
-                try:
-                    result = await run_pipeline(
-                        raw_text=raw_text,
-                        session_id=session_id,
-                        patient_id=patient_id,
-                        conversation_history=conversation_history,
-                        patient_profile=patient_profile,
-                        call_type=call_type,
-                    )
+            try:
 
-                    await save_to_messages(
-                        session_id=session_id,
-                        patient_id=patient_id,
-                        sender_type="patient",
-                        content=raw_text,
-                        corrected_content=result["corrected_text"],
-                    )
-                    await save_to_messages(
-                        session_id=session_id,
-                        patient_id=patient_id,
-                        sender_type="ai",
-                        content=result["ai_response"],
-                    )
+                corrected_text = None
+                rag_context = None
+                ai_response_tokens = []
+                sentence_buffer = ""
 
-                    await save_to_working_memory(
-                        session_id=session_id,
-                        patient_id=patient_id,
-                        speaker="patient",
-                        raw_text=result["corrected_text"],
-                    )
-                    await save_to_working_memory(
-                        session_id=session_id,
-                        patient_id=patient_id,
-                        speaker="ai",
-                        raw_text=result["ai_response"],
-                    )
+                async for chunk in run_pipeline(
+                    raw_text=raw_text,
+                    session_id=session_id,
+                    patient_id=patient_id,
+                    conversation_history=conversation_history,
+                    patient_profile=patient_profile,
+                    call_type=call_type,
+                ):
+                    if chunk["type"] == "meta":
+                        corrected_text = chunk["corrected_text"]
+                        rag_context = chunk["rag_context"]
 
-                    conversation_history.append({
-                        "role": "user",
-                        "content": result["corrected_text"],
-                    })
-                    conversation_history.append({
-                        "role": "assistant",
-                        "content": result["ai_response"],
-                    })
+                    elif chunk["type"] == "token":
+                        token = chunk["value"]
+                        ai_response_tokens.append(token)
+                        sentence_buffer += token
 
-                    print("생성된 답변: ", result["ai_response"])
-                    audio_bytes = await generate_tts(result["ai_response"])
-                    await websocket.send_text(result["ai_response"])
-                    await websocket.send_bytes(audio_bytes)
-                    await websocket.send_text("END")
+                        # 문장 경계 감지
+                        if sentence_buffer and sentence_buffer[-1] in ".!?。":
+                            sentence = sentence_buffer.strip()
+                            sentence_buffer = ""
 
-                except Exception as e:
-                    print(f"파이프라인 오류: {e}")
-                finally:
-                    accumulated_text = ""
+                            if sentence:
+                                first_chunk = True
+                                async for audio_chunk in stream_tts(sentence):
+                                    if first_chunk:
+                                        await websocket.send_text(sentence)
+                                        first_chunk = False
+                                    await websocket.send_bytes(audio_chunk)
+
+                if sentence_buffer.strip():
+                    await websocket.send_text(sentence_buffer.strip())
+                    async for audio_chunk in stream_tts(sentence_buffer.strip()):
+                        await websocket.send_bytes(audio_chunk)
+
+                ai_response = "".join(ai_response_tokens)
+
+                await save_to_messages(
+                    session_id=session_id,
+                    patient_id=patient_id,
+                    sender_type="patient",
+                    content=raw_text,
+                    corrected_content=corrected_text,
+                )
+                await save_to_messages(
+                    session_id=session_id,
+                    patient_id=patient_id,
+                    sender_type="ai",
+                    content=ai_response,
+                )
+
+                await save_to_working_memory(
+                    session_id=session_id,
+                    patient_id=patient_id,
+                    speaker="patient",
+                    raw_text=corrected_text,
+                )
+                await save_to_working_memory(
+                    session_id=session_id,
+                    patient_id=patient_id,
+                    speaker="ai",
+                    raw_text=ai_response,
+                )
+
+                conversation_history.append({
+                    "role": "user",
+                    "content": corrected_text,
+                })
+                conversation_history.append({
+                    "role": "assistant",
+                    "content": ai_response,
+                })
+
+                print("생성된 답변: ", ai_response)
+
+                await websocket.send_text("MIC_ON")
+
+            except Exception as e:
+                print(f"파이프라인 오류: {e}")
+                await websocket.send_text("MIC_ON")
+            finally:
+                is_speaking.clear()
 
         # 통화 종료 후 배치 처리
         print("통화 종료 — 배치 처리 시작")
@@ -199,7 +212,7 @@ async def voice_websocket(
         except Exception as e:
             print(f"배치 처리 오류: {e}")
         finally:
-            pipeline_done_event.set()  # 배치 처리 완료 신호
+            pipeline_done_event.set()
 
     await asyncio.gather(
         receive_audio(),
