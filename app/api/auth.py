@@ -493,7 +493,8 @@ async def get_my_patients(
                 SELECT 
                     p.id AS patient_id,
                     u.name AS patient_name,
-                    u.username AS patient_username
+                    u.username AS patient_username,
+                    p.medical_notes AS medication
                 FROM guardians g
                 JOIN patient_guardians pg ON g.id = pg.guardian_id
                 JOIN patients p ON pg.patient_id = p.id
@@ -508,6 +509,7 @@ async def get_my_patients(
                 {
                     "patient_id": str(row.patient_id),
                     "name": row.patient_name,
+                    "medication": row.medication,
                 }
                 for row in rows
             ]
