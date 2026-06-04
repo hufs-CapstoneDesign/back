@@ -4,7 +4,7 @@ from sqlalchemy import text
 import uuid
 
 from app.database import get_db
-from app.api.deps import get_current_user, get_patient_id
+from app.api.deps import get_current_user, get_patient_id, require_guardian
 from app.schemas.schedule import ScheduleUpdateRequest
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
@@ -107,3 +107,40 @@ async def update_schedules(
 
     await db.commit()
     return {"status": "updated"}
+
+
+@router.get("/missed-calls")
+async def get_missed_calls(
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_guardian),
+):
+    guardian_result = await db.execute(text("""
+        SELECT id FROM guardians WHERE user_id = CAST(:user_id AS uuid)
+    """), {"user_id": current_user["sub"]})
+
+    guardian_row = guardian_result.fetchone()
+    if not guardian_row:
+        raise HTTPException(status_code=404, detail="보호자 정보를 찾을 수 없습니다.")
+
+    result = await db.execute(text("""
+        SELECT
+            n.id,
+            n.scheduled_at,
+            u.name AS patient_name
+        FROM missed_call_notifications n
+        JOIN patients p ON n.patient_id = p.id
+        JOIN users u ON p.user_id = u.id
+        WHERE n.guardian_id = CAST(:guardian_id AS uuid)
+        ORDER BY n.scheduled_at DESC
+    """), {"guardian_id": str(guardian_row[0])})
+
+    rows = result.fetchall()
+
+    return [
+        {
+            "notifications_id": str(row[0]),
+            "scheduled_at": row[1].isoformat() if row[1] else None,
+            "patient_name": row[2],
+        }
+        for row in rows
+    ]
