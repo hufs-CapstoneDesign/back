@@ -21,7 +21,6 @@ def _tts_headers() -> dict:
 
 
 async def stream_tts(text: str):
-    """텍스트 → mp3 chunk async generator"""
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             async with client.stream(
@@ -29,7 +28,7 @@ async def stream_tts(text: str):
                 url,
                 headers=_tts_headers(),
                 json=_tts_payload(text),
-                params={"output_format": "mp3_44100_128"},
+                params={"output_format": "pcm_44100"},
             ) as response:
                 response.raise_for_status()
 
