@@ -45,6 +45,9 @@ def send_missed_call_notification(fcm_token: str, patient_name: str):
     print(fcm_token)
     message = messaging.Message(
         token=fcm_token,
+        data = {
+            "type": "NO_REPLY"
+            },
         notification=messaging.Notification(
             title="미수신 알림",
             body=f"{patient_name}님이 3회 연속 전화를 받지 않았습니다.",
