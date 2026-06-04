@@ -97,16 +97,26 @@ async def vito_streaming_stt(
                 if msg.get("final"):
                     pending_nonfinal = None
                     cancel_task(fallback_task)
-
                     utterance_buffer.append(text)
-
                     cancel_task(flush_task)
                     flush_task = asyncio.create_task(flush_after_silence())
 
                 else:
                     pending_nonfinal = text
-
                     cancel_task(fallback_task)
                     fallback_task = asyncio.create_task(flush_after_no_final())
+
+            pending = [t for t in [flush_task, fallback_task] if t and not t.done()]
+            if pending:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*pending, return_exceptions=True),
+                        timeout=SILENCE_THRESHOLD + 0.5
+                    )
+                except asyncio.TimeoutError:
+                    pass
+
+            await text_queue.put(None)
+            print("[STT] EOS 센티널 전송")
 
         await asyncio.gather(send_audio(), receive_text())

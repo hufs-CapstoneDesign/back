@@ -108,11 +108,22 @@ async def voice_websocket(
             print(f"파이프라인 실행: {raw_text}")
 
             try:
-
                 corrected_text = None
                 rag_context = None
                 ai_response_tokens = []
                 sentence_buffer = ""
+                tts_queue = asyncio.Queue()
+
+                async def tts_sender():
+                    while True:
+                        sentence = await tts_queue.get()
+                        if sentence is None:
+                            break
+                        await websocket.send_text(sentence)
+                        async for audio_chunk in stream_tts(sentence):
+                            await websocket.send_bytes(audio_chunk)
+
+                sender_task = asyncio.create_task(tts_sender())
 
                 async for chunk in run_pipeline(
                     raw_text=raw_text,
@@ -131,23 +142,17 @@ async def voice_websocket(
                         ai_response_tokens.append(token)
                         sentence_buffer += token
 
-                        # 문장 경계 감지
-                        if sentence_buffer and sentence_buffer[-1] in ".!?。":
+                        if sentence_buffer and sentence_buffer[-1] in ".!?":
                             sentence = sentence_buffer.strip()
                             sentence_buffer = ""
-
                             if sentence:
-                                first_chunk = True
-                                async for audio_chunk in stream_tts(sentence):
-                                    if first_chunk:
-                                        await websocket.send_text(sentence)
-                                        first_chunk = False
-                                    await websocket.send_bytes(audio_chunk)
+                                await tts_queue.put(sentence)
 
                 if sentence_buffer.strip():
-                    await websocket.send_text(sentence_buffer.strip())
-                    async for audio_chunk in stream_tts(sentence_buffer.strip()):
-                        await websocket.send_bytes(audio_chunk)
+                    await tts_queue.put(sentence_buffer.strip())
+
+                await tts_queue.put(None)
+                await sender_task
 
                 ai_response = "".join(ai_response_tokens)
 
