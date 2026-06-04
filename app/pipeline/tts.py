@@ -28,7 +28,7 @@ async def stream_tts(text: str):
                 url,
                 headers=_tts_headers(),
                 json=_tts_payload(text),
-                params={"output_format": "pcm_44100"},
+                params={"output_format": "pcm_16000"},
             ) as response:
                 response.raise_for_status()
 
