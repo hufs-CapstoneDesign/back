@@ -122,6 +122,7 @@ async def voice_websocket(
                         await websocket.send_text(sentence)
                         async for audio_chunk in stream_tts(sentence):
                             await websocket.send_bytes(audio_chunk)
+                        await websocket.send_text(f"SENTENCE_END")
 
                 sender_task = asyncio.create_task(tts_sender())
 
