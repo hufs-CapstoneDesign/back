@@ -8,8 +8,6 @@ from app.fcm.fcm import send_call_notification, send_missed_call_notification
 import uuid
 
 scheduler = AsyncIOScheduler()
-base_minutes = 5
-
 
 async def check_missed_call(scheduled_call_id: str, patient_id: str, fcm_token: str, guardian_fcm_token: str, patient_name: str):
     async with AsyncSessionLocal() as db:
@@ -74,18 +72,18 @@ async def check_missed_call(scheduled_call_id: str, patient_id: str, fcm_token: 
             except Exception as e:
                 print(f"보호자 알림 발송 실패: {e}")
         else:
-            # 5분 후 재발신
-            retry_time = datetime.now() + timedelta(base_minutes)
+            # 9분 후 재발신
+            retry_time = datetime.now() + timedelta(minutes=9)
             scheduler.add_job(
                 lambda: send_call_notification(fcm_token, call_type="scheduled"),
                 DateTrigger(run_date=retry_time),
             )
             print(f"재발신 예약: patient_id={patient_id}")
 
-            # 재발신 후 5분 후 체크 (현재 기준 10분 후)
+            # 재발신 1분 후 체크
             scheduler.add_job(
                 check_missed_call,
-                DateTrigger(run_date=retry_time + timedelta(base_minutes)),
+                DateTrigger(run_date=retry_time + timedelta(minutes=1)),
                 args=[scheduled_call_id, patient_id, fcm_token, guardian_fcm_token, patient_name],
             )
 
@@ -148,14 +146,13 @@ async def fire_scheduled_calls():
             except Exception as e:
                 print(f"FCM 발신 실패: {e}")
 
-            # 5분 후 미수신 확인 job 등록
-            check_time = datetime.now() + timedelta(base_minutes)
+            check_time = datetime.now() + timedelta(minutes=1)
             scheduler.add_job(
                 check_missed_call,
                 DateTrigger(run_date=check_time),
                 args=[scheduled_call_id, patient_id, fcm_token, guardian_fcm_token, patient_name],
             )
-            print(f"5분 후 미수신 확인 job 등록: {check_time}")
+            print(f"1분 후 미수신 확인 job 등록: {check_time}")
 
 
 def start_scheduler():
