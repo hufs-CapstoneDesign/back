@@ -38,7 +38,7 @@ async def start_session(
 
     return {
         "session_id": str(new_session.id),
-        "websocket_url": f'{settings.WS_BASE_URL}{settings.APP_PORT}/ws/calls?session_id={new_session.id}'
+        "websocket_url": f'{settings.WS_BASE_URL}/ws/calls?session_id={new_session.id}'
     }
 
 
