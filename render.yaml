@@ -2,6 +2,7 @@ services:
   - type: web
     name: caremate-api
     runtime: python
+    branch: dev
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
