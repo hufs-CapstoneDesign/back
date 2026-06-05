@@ -30,6 +30,9 @@ async def stream_tts(text: str):
                 json=_tts_payload(text),
                 params={"output_format": "pcm_16000"},
             ) as response:
+                if response.status_code != 200:
+                    await response.aread()
+                    raise RuntimeError(f"ElevenLabs TTS 실패 (status={response.status_code}): {response.text}")
                 response.raise_for_status()
 
                 async for chunk in response.aiter_bytes(chunk_size=4096):
@@ -37,8 +40,7 @@ async def stream_tts(text: str):
                         yield chunk
 
     except httpx.HTTPStatusError as e:
-        await e.response.aread()
-        raise RuntimeError(f"ElevenLabs TTS 실패 (status={e.response.status_code}): {e.response.text}")
+        raise RuntimeError(f"ElevenLabs TTS 실패 (status={e.response.status_code})")
     except httpx.TimeoutException:
         raise RuntimeError("ElevenLabs TTS timeout")
     except httpx.RequestError as e:
