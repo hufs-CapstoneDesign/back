@@ -21,6 +21,7 @@ def _tts_headers() -> dict:
 
 
 async def stream_tts(text: str):
+    print(f"ELEVENLABS_KEY: {settings.ELEVENLABS_KEY[:5]}...{settings.ELEVENLABS_KEY[-1]}")
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             async with client.stream(
