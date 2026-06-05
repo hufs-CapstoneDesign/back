@@ -37,7 +37,7 @@ async def stream_tts(text: str):
                         yield chunk
 
     except httpx.HTTPStatusError as e:
-        raise RuntimeError(f"ElevenLabs TTS 실패 (status={e.response.status_code}): {e.response.text}")
+        raise RuntimeError(f"ElevenLabs TTS 실패 (status={e.response.status_code}): {e.response.content}")
     except httpx.TimeoutException:
         raise RuntimeError("ElevenLabs TTS timeout")
     except httpx.RequestError as e:
