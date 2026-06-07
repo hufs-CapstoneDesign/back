@@ -2,10 +2,12 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from sqlalchemy import text
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.database import AsyncSessionLocal
 from app.fcm.fcm import send_call_notification, send_missed_call_notification
 import uuid
+
+KST = timezone(timedelta(hours=9))
 
 scheduler = AsyncIOScheduler()
 
@@ -73,7 +75,7 @@ async def check_missed_call(scheduled_call_id: str, patient_id: str, fcm_token: 
                 print(f"보호자 알림 발송 실패: {e}")
         else:
             # 9분 후 재발신
-            retry_time = datetime.now() + timedelta(minutes=9)
+            retry_time = datetime.now(tz=KST) + timedelta(minutes=9)
             scheduler.add_job(
                 lambda: send_call_notification(fcm_token, call_type="scheduled"),
                 DateTrigger(run_date=retry_time),
@@ -90,7 +92,7 @@ async def check_missed_call(scheduled_call_id: str, patient_id: str, fcm_token: 
 
 async def fire_scheduled_calls():
     print("스케줄러 실행됨")
-    now = datetime.now()
+    now = datetime.now(tz=KST)
     current_time = now.strftime("%H:%M:00")
     current_dow = now.weekday()
 
@@ -146,7 +148,7 @@ async def fire_scheduled_calls():
             except Exception as e:
                 print(f"FCM 발신 실패: {e}")
 
-            check_time = datetime.now() + timedelta(minutes=1)
+            check_time = datetime.now(tz=KST) + timedelta(minutes=1)
             scheduler.add_job(
                 check_missed_call,
                 DateTrigger(run_date=check_time),

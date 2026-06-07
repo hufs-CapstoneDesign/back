@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import uuid
 
 from app.config import settings
@@ -12,6 +12,7 @@ from app.models.user import User
 from app.api.deps import get_current_user, get_patient_id
 from app.fcm.fcm import send_call_notification
 
+KST = timezone(timedelta(hours=9))
 
 router = APIRouter(tags=["calls"])
 
@@ -27,7 +28,7 @@ async def start_session(
         id=str(uuid.uuid4()),
         patient_id=patient_id,
         call_type=body.call_type,
-        started_at=datetime.utcnow(),
+        started_at=datetime.now(tz=KST).replace(tzinfo=None),
         ended_at=None,
         missed_count=0,
         emergency_sent=False,
@@ -55,7 +56,7 @@ async def end_session(
         RETURNING id
     """), {
         "session_id": session_id,
-        "ended_at": datetime.utcnow(),
+        "ended_at": datetime.now(tz=KST).replace(tzinfo=None),
     })
 
     row = result.fetchone()
