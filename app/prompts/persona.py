@@ -1,8 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
+KST = timezone(timedelta(hours=9))
 
 def build_system_prompt(patient_profile: dict, call_type: str = "voluntary") -> str:
-    now = datetime.now()
+    now = datetime.now(tz=KST)
     current_time = now.strftime("%Y년 %m월 %d일 %H시 %M분")
     weekday = ["월", "화", "수", "목", "금", "토", "일"][now.weekday()]
     name = patient_profile.get("name", "어르신")
