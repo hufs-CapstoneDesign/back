@@ -143,7 +143,7 @@ async def fire_scheduled_calls():
 
             # FCM 발신
             try:
-                send_call_notification(fcm_token, call_type="requested")
+                send_call_notification(fcm_token, call_type="scheduled")
                 print(f"FCM 발신 완료: patient_id={patient_id}")
             except Exception as e:
                 print(f"FCM 발신 실패: {e}")
