@@ -33,6 +33,10 @@ app.include_router(reports_router)
 app.include_router(schedule_router)
 app.include_router(conversations_router)
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 if __name__ == "__main__":
     uvicorn.run(
         app="app.main:app",
