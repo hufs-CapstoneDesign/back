@@ -12,16 +12,20 @@ async def run_pipeline(
     patient_profile: dict,
     call_type: str = "voluntary",
     ) -> AsyncGenerator[dict, None]:
-    # 1. 1차 발화 보정
-    correction_result = await correct_first_pass(raw_text)
-    corrected_text = correction_result["corrected"]
+    if raw_text == "__GREETING__":
+        corrected_text = "__GREETING__"
+        rag_context = None
+    else:
+        # 1. 1차 발화 보정
+        correction_result = await correct_first_pass(raw_text)
+        corrected_text = correction_result["corrected"]
 
-    # 2. RAG 검색
-    rag_context = await retrieve_context(
-        utterance=corrected_text,
-        session_id=session_id,
-        patient_id=patient_id,
-    )
+        # 2. RAG 검색
+        rag_context = await retrieve_context(
+            utterance=corrected_text,
+            session_id=session_id,
+            patient_id=patient_id,
+        )
 
     # 3. LLM 답변 생성
     yield {
