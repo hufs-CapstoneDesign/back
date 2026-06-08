@@ -95,6 +95,10 @@ async def voice_websocket(
         await vito_streaming_stt(audio_queue, text_queue, stop_event, is_speaking)
 
     async def call_pipeline():
+        # scheduled 통화면 AI가 먼저 인사
+        if call_type == "scheduled":
+            await text_queue.put("__GREETING__")
+
         while not stop_event.is_set() or not text_queue.empty():
             try:
                 raw_text = await asyncio.wait_for(
@@ -157,25 +161,30 @@ async def voice_websocket(
 
                 ai_response = "".join(ai_response_tokens)
 
-                await save_to_messages(
-                    session_id=session_id,
-                    patient_id=patient_id,
-                    sender_type="patient",
-                    content=raw_text,
-                    corrected_content=corrected_text,
-                )
+                if raw_text != "__GREETING__":
+                    await save_to_messages(
+                        session_id=session_id,
+                        patient_id=patient_id,
+                        sender_type="patient",
+                        content=raw_text,
+                        corrected_content=corrected_text,
+                    )
+                    await save_to_working_memory(
+                        session_id=session_id,
+                        patient_id=patient_id,
+                        speaker="patient",
+                        raw_text=corrected_text,
+                    )
+                    conversation_history.append({
+                        "role": "user",
+                        "content": corrected_text,
+                    })
+
                 await save_to_messages(
                     session_id=session_id,
                     patient_id=patient_id,
                     sender_type="ai",
                     content=ai_response,
-                )
-
-                await save_to_working_memory(
-                    session_id=session_id,
-                    patient_id=patient_id,
-                    speaker="patient",
-                    raw_text=corrected_text,
                 )
                 await save_to_working_memory(
                     session_id=session_id,
@@ -183,11 +192,6 @@ async def voice_websocket(
                     speaker="ai",
                     raw_text=ai_response,
                 )
-
-                conversation_history.append({
-                    "role": "user",
-                    "content": corrected_text,
-                })
                 conversation_history.append({
                     "role": "assistant",
                     "content": ai_response,
