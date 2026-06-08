@@ -34,6 +34,7 @@ app.include_router(schedule_router)
 app.include_router(conversations_router)
 
 @app.get("/health")
+@app.head("/health", include_in_schema=False)
 async def health():
     return {"status": "ok"}
 
