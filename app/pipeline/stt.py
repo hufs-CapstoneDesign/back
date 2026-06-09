@@ -5,7 +5,7 @@ import websockets
 from app.config import settings
 
 VITO_WS_URL = "wss://openapi.vito.ai/v1/transcribe:streaming"
-SILENCE_THRESHOLD = 1.5
+SILENCE_THRESHOLD = 2
 NO_FINAL_TIMEOUT = 1.2
 
 
