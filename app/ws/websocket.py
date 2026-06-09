@@ -108,7 +108,8 @@ async def voice_websocket(
                 continue
 
             is_speaking.set()
-            await websocket.send_text("MIC_OFF")
+            if raw_text != "__GREETING__":
+                await websocket.send_text("MIC_OFF")
             print(f"파이프라인 실행: {raw_text}")
 
             try:
