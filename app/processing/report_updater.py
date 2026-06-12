@@ -72,6 +72,31 @@ async def upsert_daily_report(
                 existing_summary = json.loads(existing_summary)
             updated_summary = merge_summary_smart(existing_summary, new_summary)
 
+            # physical_summary 병합: 새로운 정보가 유효하면(condition이 null이 아니고 신뢰도가 기존 이상이거나 기존 condition이 null인 경우) 업데이트
+            existing_physical = existing.physical_summary or {}
+            if isinstance(existing_physical, str):
+                existing_physical = json.loads(existing_physical)
+            
+            if new_physical.get("condition") is not None:
+                old_conf = existing_physical.get("confidence", 0.0)
+                new_conf = new_physical.get("confidence", 0.0)
+                if existing_physical.get("condition") is None or new_conf >= old_conf:
+                    updated_physical = new_physical
+                else:
+                    updated_physical = existing_physical
+            else:
+                updated_physical = existing_physical
+
+            # mood 병합: 새로운 mood status가 존재하고 신뢰도(0.0보다 큼)가 있는 경우 업데이트
+            existing_mood = existing.mood
+            new_mood_status = slot_result.get("analysis", {}).get("mood", {}).get("status")
+            new_mood_conf = slot_result.get("analysis", {}).get("mood", {}).get("confidence", 0.0)
+            
+            if new_mood_status is not None and new_mood_conf > 0.0:
+                updated_mood = new_mood_status
+            else:
+                updated_mood = existing_mood if existing_mood else new_mood_status
+
             # medication_taken: 병합된 전체 슬롯 기준으로 재계산
             medication_taken = any(m.get("taken") is True for m in updated_meds)
 
@@ -90,8 +115,8 @@ async def upsert_daily_report(
             """), {
                 "medication": json.dumps(updated_meds, ensure_ascii=False),
                 "meal": json.dumps(updated_meals, ensure_ascii=False),
-                "physical": json.dumps(new_physical, ensure_ascii=False),
-                "mood": new_mood,
+                "physical": json.dumps(updated_physical, ensure_ascii=False),
+                "mood": updated_mood,
                 "call_summary": json.dumps(updated_summary, ensure_ascii=False),
                 "medication_taken": medication_taken,
                 "patient_id": patient_id,
@@ -139,12 +164,60 @@ async def upsert_daily_report(
 
 
 def merge_time_list(existing: list, new: list, key: str) -> list:
-    """시간대별 리스트 병합 — 새로 확인된 정보만 업데이트"""
-    existing_map = {item.get(key): item for item in existing}
+    """시간대별 리스트 병합 — 정보가 있는 경우에만 기존 신뢰도와 비교해 업데이트"""
+    existing_map = {item.get(key): item.copy() for item in existing}
+    
     for item in new:
         time_key = item.get(key)
-        if time_key and any(v is not None for k, v in item.items() if k != key):
-            existing_map[time_key] = item
+        if not time_key:
+            continue
+        
+        # 신규 아이템에 실질적인 정보(식사 여부 혹은 복약 여부)가 있는지 판별
+        new_val = item.get("eaten") if "eaten" in item else item.get("taken")
+        new_conf = item.get("confidence", 0.0)
+        
+        if time_key in existing_map:
+            old_item = existing_map[time_key]
+            old_val = old_item.get("eaten") if "eaten" in old_item else old_item.get("taken")
+            old_conf = old_item.get("confidence", 0.0)
+            
+            # 새 정보가 유효한 경우 (None이 아님)
+            if new_val is not None:
+                # 기존 값이 없었거나, 새 정보의 신뢰도가 기존 신뢰도보다 크거나 같을 때 갱신
+                if old_val is None or new_conf >= old_conf:
+                    merged_item = item.copy()
+                    if "menu_candidates" in item:
+                        old_candidates = old_item.get("menu_candidates", [])
+                        new_candidates = item.get("menu_candidates", [])
+                        merged_candidates = list(dict.fromkeys(old_candidates + new_candidates))
+                        merged_item["menu_candidates"] = merged_candidates
+                        
+                        if not old_item.get("menu_certain", True) or not item.get("menu_certain", True):
+                            merged_item["menu_certain"] = False
+                            
+                    existing_map[time_key] = merged_item
+                else:
+                    # 기존 정보 신뢰도가 더 높은 경우에도 식사 메뉴 후보가 추가로 들어왔다면 누적
+                    if "menu_candidates" in item:
+                        old_candidates = old_item.get("menu_candidates", [])
+                        new_candidates = item.get("menu_candidates", [])
+                        merged_candidates = list(dict.fromkeys(old_candidates + new_candidates))
+                        old_item["menu_candidates"] = merged_candidates
+                        if not item.get("menu_certain", True):
+                            old_item["menu_certain"] = False
+            else:
+                # 새 정보의 eaten/taken이 None이지만, 메뉴 후보가 새로 들어왔다면 누적
+                if "menu_candidates" in item and item.get("menu_candidates"):
+                    old_candidates = old_item.get("menu_candidates", [])
+                    new_candidates = item.get("menu_candidates", [])
+                    merged_candidates = list(dict.fromkeys(old_candidates + new_candidates))
+                    old_item["menu_candidates"] = merged_candidates
+                    if not item.get("menu_certain", True):
+                        old_item["menu_certain"] = False
+        else:
+            # 기존에 없던 시간대면 그냥 추가
+            existing_map[time_key] = item.copy()
+            
     return list(existing_map.values())
 
 

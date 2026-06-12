@@ -24,7 +24,11 @@ _SLOT_FILLING_PROMPT_TEMPLATE = """다음은 치매 환자와 AI의 대화입니
 6. 식사는 아침/점심/저녁 3끼 기준입니다.
 7. "taken: null"은 대화에서 해당 시간대 복약을 확인하지 못한 것입니다. false와 다릅니다.
 8. AI가 복약을 물어봤는데 환자가 답하지 않은 경우도 null입니다.
-9. call_summary_sections 작성 기준:
+9. 식사 메뉴는 menu_candidates 배열에 저장하며, 확실성 여부를 menu_certain 플래그로 표시합니다.
+- 환자가 먹었다고 언급한 메뉴가 특정 메뉴로 확실하면 menu_candidates에 해당 메뉴명을 넣고 menu_certain은 true로 하세요. (예: "미역국 먹었어" -> menu_candidates: ["미역국"], menu_certain: true)
+- 메뉴를 여러 개 언급하거나 번복/불확실(예: "빵 하나 먹었나? 피자 먹은 것 같기도 하고...")하면 menu_candidates에 모든 후보를 배열로 넣고 menu_certain은 false로 하세요. (예: menu_candidates: ["빵", "피자"], menu_certain: false)
+- 식사 언급이 전혀 없거나 메뉴를 모르는 경우 menu_candidates는 빈 배열 []로 하고 menu_certain은 true로 하세요.
+10. call_summary_sections 작성 기준:
 - 환자의 발화를 그대로 반영하세요.
 - "~한 것 같아", "~인가?" 등 불확실 표현이 있으면 요약에도 반드시 불확실성을 포함하세요.
   예) "먹은 것 같다고 말함" (O) / "먹었다고 언급함" (X)
@@ -33,9 +37,9 @@ _SLOT_FILLING_PROMPT_TEMPLATE = """다음은 치매 환자와 AI의 대화입니
 [출력 형식] JSON만 출력, 다른 텍스트 없이.
 {{
   "meals": [
-    {{"time": "아침", "eaten": true | false | null, "menu": "메뉴 또는 null", "confidence": 0.0}},
-    {{"time": "점심", "eaten": true | false | null, "menu": "메뉴 또는 null", "confidence": 0.0}},
-    {{"time": "저녁", "eaten": true | false | null, "menu": "메뉴 또는 null", "confidence": 0.0}}
+    {{"time": "아침", "eaten": true | false | null, "menu_candidates": ["메뉴후보"], "menu_certain": true | false, "confidence": 0.0}},
+    {{"time": "점심", "eaten": true | false | null, "menu_candidates": ["메뉴후보"], "menu_certain": true | false, "confidence": 0.0}},
+    {{"time": "저녁", "eaten": true | false | null, "menu_candidates": ["메뉴후보"], "menu_certain": true | false, "confidence": 0.0}}
   ],
   "medications": [
 {medication_slots}
