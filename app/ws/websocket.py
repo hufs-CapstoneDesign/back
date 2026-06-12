@@ -95,17 +95,41 @@ async def voice_websocket(
         await vito_streaming_stt(audio_queue, text_queue, stop_event, is_speaking)
 
     async def call_pipeline():
-        # scheduled 통화면 AI가 먼저 인사
         if call_type == "scheduled":
             await text_queue.put("__GREETING__")
 
-        while not stop_event.is_set() or not text_queue.empty():
-            try:
-                raw_text = await asyncio.wait_for(
-                    text_queue.get(), timeout=1.0
-                )
-            except asyncio.TimeoutError:
-                continue
+        tts_queue = asyncio.Queue()
+        turn_done_event = asyncio.Event()
+
+        async def tts_sender():
+            while True:
+                item = await tts_queue.get()
+
+                if item is None:
+                    break
+
+                if item == "__TURN_END__":
+                    turn_done_event.set()
+                    continue
+
+                sentence = item
+                try:
+                    first_chunk = True
+                    async for audio_chunk in stream_tts(sentence):
+                        if first_chunk:
+                            await websocket.send_text(sentence)
+                            first_chunk = False
+                        await websocket.send_bytes(audio_chunk)
+                    await websocket.send_text("SENTENCE_END")
+                except Exception as e:
+                    print(f"TTS 오류: {e}")
+
+        tts_task = asyncio.create_task(tts_sender())
+
+        while True:
+            raw_text = await text_queue.get()
+            if raw_text is None:
+                break
 
             is_speaking.set()
             if raw_text != "__GREETING__":
@@ -114,22 +138,9 @@ async def voice_websocket(
 
             try:
                 corrected_text = None
-                rag_context = None
                 ai_response_tokens = []
                 sentence_buffer = ""
-                tts_queue = asyncio.Queue()
-
-                async def tts_sender():
-                    while True:
-                        sentence = await tts_queue.get()
-                        if sentence is None:
-                            break
-                        await websocket.send_text(sentence)
-                        async for audio_chunk in stream_tts(sentence):
-                            await websocket.send_bytes(audio_chunk)
-                        await websocket.send_text(f"SENTENCE_END")
-
-                sender_task = asyncio.create_task(tts_sender())
+                turn_done_event.clear()
 
                 async for chunk in run_pipeline(
                     raw_text=raw_text,
@@ -141,7 +152,6 @@ async def voice_websocket(
                 ):
                     if chunk["type"] == "meta":
                         corrected_text = chunk["corrected_text"]
-                        rag_context = chunk["rag_context"]
 
                     elif chunk["type"] == "token":
                         token = chunk["value"]
@@ -157,8 +167,8 @@ async def voice_websocket(
                 if sentence_buffer.strip():
                     await tts_queue.put(sentence_buffer.strip())
 
-                await tts_queue.put(None)
-                await sender_task
+                await tts_queue.put("__TURN_END__")
+                await turn_done_event.wait()
 
                 ai_response = "".join(ai_response_tokens)
 
@@ -198,8 +208,7 @@ async def voice_websocket(
                     "content": ai_response,
                 })
 
-                print("생성된 답변: ", ai_response)
-
+                print("생성된 답변:", ai_response)
                 await websocket.send_text("MIC_ON")
 
             except Exception as e:
@@ -208,7 +217,10 @@ async def voice_websocket(
             finally:
                 is_speaking.clear()
 
-        # 통화 종료 후 배치 처리
+        # tts_sender 종료
+        await tts_queue.put(None)
+        await tts_task
+
         print("통화 종료 — 배치 처리 시작")
         try:
             if conversation_history:
