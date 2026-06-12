@@ -216,6 +216,17 @@ async def voice_websocket(
                 await websocket.send_text("MIC_ON")
             finally:
                 is_speaking.clear()
+                drained = 0
+                while not text_queue.empty():
+                    stale = text_queue.get_nowait()
+                    if stale is None:
+                        # EOS 센티널은 다시 넣어줌
+                        await text_queue.put(None)
+                        break
+                    drained += 1
+                    print(f"[drain] 잔여 텍스트 제거: {stale}")
+                if drained:
+                    print(f"[drain] 총 {drained}개 항목 제거")
 
         # tts_sender 종료
         await tts_queue.put(None)
