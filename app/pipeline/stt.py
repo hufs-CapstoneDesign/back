@@ -5,7 +5,7 @@ import websockets
 from app.config import settings
 
 VITO_WS_URL = "wss://openapi.vito.ai/v1/transcribe:streaming"
-SILENCE_THRESHOLD = 2
+SILENCE_THRESHOLD = 3
 NO_FINAL_TIMEOUT = 1.2
 
 
@@ -63,24 +63,27 @@ async def vito_streaming_stt(
                     t.cancel()
 
             async def flush_after_silence():
+                """final=true 이후 SILENCE_THRESHOLD 동안 추가 final이 없으면 flush"""
                 await asyncio.sleep(SILENCE_THRESHOLD)
                 if utterance_buffer:
-                    full_text = " ".join(utterance_buffer)
+                    full_text = utterance_buffer[-1]
                     utterance_buffer.clear()
                     print(f"[STT flush - normal] {full_text}")
                     await text_queue.put(full_text)
 
             async def flush_after_no_final():
-                """폴백 경로: final=true 없이 NO_FINAL_TIMEOUT 초 경과 시 강제 flush"""
                 await asyncio.sleep(NO_FINAL_TIMEOUT)
                 nonlocal pending_nonfinal
                 if pending_nonfinal:
                     text = pending_nonfinal
                     pending_nonfinal = None
-                    combined = " ".join(utterance_buffer + [text]).strip()
+
+                    candidates = utterance_buffer + [text]
+                    full_text = max(candidates, key=len).strip()
+                   
                     utterance_buffer.clear()
-                    print(f"[STT flush - fallback] {combined}")
-                    await text_queue.put(combined)
+                    print(f"[STT flush - fallback] {full_text}")
+                    await text_queue.put(full_text)
 
             async for raw in ws:
                 print("VITO:", raw)
@@ -100,7 +103,6 @@ async def vito_streaming_stt(
                     utterance_buffer.append(text)
                     cancel_task(flush_task)
                     flush_task = asyncio.create_task(flush_after_silence())
-
                 else:
                     pending_nonfinal = text
                     cancel_task(fallback_task)
@@ -114,7 +116,11 @@ async def vito_streaming_stt(
                         timeout=SILENCE_THRESHOLD + 0.5
                     )
                 except asyncio.TimeoutError:
-                    pass
+                    if utterance_buffer:
+                        full_text = utterance_buffer[-1]
+                        utterance_buffer.clear()
+                        print(f"[STT flush - timeout fallback] {full_text}")
+                        await text_queue.put(full_text)
 
             await text_queue.put(None)
             print("[STT] EOS 센티널 전송")
