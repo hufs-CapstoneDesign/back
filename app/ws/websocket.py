@@ -228,6 +228,7 @@ async def voice_websocket(
                     session_id=session_id,
                     patient_id=patient_id,
                     conversation_history=conversation_history,
+                    medical_notes=patient_profile.get("medical_notes", ""),
                 )
                 print("배치 처리 완료")
             else:

@@ -1,3 +1,4 @@
+# slot_filling.py
 import json
 from openai import AsyncOpenAI
 from sqlalchemy import text
@@ -6,18 +7,28 @@ from app.config import settings
 
 client = AsyncOpenAI(api_key=settings.OPENAI_KEY)
 
-SLOT_FILLING_PROMPT = """다음은 치매 환자와 AI의 대화입니다.
+_SLOT_FILLING_PROMPT_TEMPLATE = """다음은 치매 환자와 AI의 대화입니다.
 대화에서 아래 정보를 JSON 형식으로 추출하세요.
 
 [추출 규칙 - 반드시 준수]
 1. 대화에서 환자가 직접 언급한 것만 추출하세요.
 2. 언급되지 않은 항목은 반드시 null로 표시하세요.
 3. 절대 추측하거나 지어내지 마세요. AI의 질문에 환자가 답하지 않았다면 null입니다.
-4. confidence: 환자가 명확히 말했으면 0.9 이상, 애매하면 0.5 이하, 언급 없으면 0.0
-5. 복약은 아침/저녁 2회 기준입니다.
+4. [confidence 산정 기준 — 반드시 준수]
+- 환자가 명확하고 일관되게 말했을 때만 0.9 이상
+- "~한 것 같아", "~인가?", "~었나?" 등 불확실 표현이 있으면 최대 0.6
+- 대화 중 번복(예: "안 먹었어" → "먹었어")이 있으면 최대 0.55
+- 불확실 표현 + 번복이 모두 있으면 최대 0.45
+- 언급 없으면 0.0
+5. 복약은 {medication_times_desc} 기준입니다.
 6. 식사는 아침/점심/저녁 3끼 기준입니다.
 7. "taken: null"은 대화에서 해당 시간대 복약을 확인하지 못한 것입니다. false와 다릅니다.
 8. AI가 복약을 물어봤는데 환자가 답하지 않은 경우도 null입니다.
+9. call_summary_sections 작성 기준:
+- 환자의 발화를 그대로 반영하세요.
+- "~한 것 같아", "~인가?" 등 불확실 표현이 있으면 요약에도 반드시 불확실성을 포함하세요.
+  예) "먹은 것 같다고 말함" (O) / "먹었다고 언급함" (X)
+- 번복이 있었던 경우: "처음에는 X라고 했다가 Y로 번복함"처럼 번복 사실을 명시하세요.
 
 [출력 형식] JSON만 출력, 다른 텍스트 없이.
 {{
@@ -27,8 +38,7 @@ SLOT_FILLING_PROMPT = """다음은 치매 환자와 AI의 대화입니다.
     {{"time": "저녁", "eaten": true | false | null, "menu": "메뉴 또는 null", "confidence": 0.0}}
   ],
   "medications": [
-    {{"time": "아침", "taken": true | false | null, "drug_name": "약 이름 또는 null", "confidence": 0.0}},
-    {{"time": "저녁", "taken": true | false | null, "drug_name": "약 이름 또는 null", "confidence": 0.0}}
+{medication_slots}
   ],
   "analysis": {{
     "physical": {{"condition": "신체 상태 한 줄 또는 null", "confidence": 0.0}},
@@ -52,15 +62,40 @@ SLOT_FILLING_PROMPT = """다음은 치매 환자와 AI의 대화입니다.
 """
 
 
-async def extract_slot(conversation: str) -> dict:
+def build_slot_filling_prompt(conversation: str, medication_times: list[str]) -> str:
+    """medication_times 기반으로 프롬프트의 복약 슬롯을 동적 생성."""
+    slots = "\n".join(
+        f'    {{"time": "{t}", "taken": true | false | null, "drug_name": "약 이름 또는 null", "confidence": 0.0}}'
+        for t in medication_times
+    )
+    times_desc = "/".join(medication_times) + f" {len(medication_times)}회"
+
+    return _SLOT_FILLING_PROMPT_TEMPLATE.format(
+        medication_times_desc=times_desc,
+        medication_slots=slots,
+        conversation=conversation,
+    )
+
+
+def compute_avg_confidence(slot_result: dict) -> float:
+    """슬롯 결과 전체에서 언급된 항목의 평균 confidence 계산."""
+    scores = []
+    for m in slot_result.get("medications", []):
+        scores.append(m.get("confidence", 0.0))
+    for m in slot_result.get("meals", []):
+        scores.append(m.get("confidence", 0.0))
+    physical_conf = slot_result.get("analysis", {}).get("physical", {}).get("confidence", 0.0)
+    mood_conf = slot_result.get("analysis", {}).get("mood", {}).get("confidence", 0.0)
+    scores.extend([physical_conf, mood_conf])
+    non_zero = [s for s in scores if s > 0.0]
+    return round(sum(non_zero) / len(non_zero), 3) if non_zero else 0.0
+
+
+async def extract_slot(conversation: str, medication_times: list[str]) -> dict:
+    prompt = build_slot_filling_prompt(conversation, medication_times)
     response = await client.chat.completions.create(
         model="gpt-4o",
-        messages=[
-            {
-                "role": "user",
-                "content": SLOT_FILLING_PROMPT.format(conversation=conversation)
-            }
-        ],
+        messages=[{"role": "user", "content": prompt}],
         max_tokens=800,
         response_format={"type": "json_object"},
     )
@@ -99,7 +134,7 @@ async def save_slot_result(
             "physical": json.dumps(slot_result.get("analysis", {}).get("physical", {}), ensure_ascii=False),
             "emotion": slot_result.get("analysis", {}).get("mood", {}).get("status"),
             "call_summary": json.dumps(slot_result.get("call_summary_sections", {}), ensure_ascii=False),
-            "confidence": 0.8,
+            "confidence": compute_avg_confidence(slot_result),
             "source": "direct",
         })
         await db.commit()

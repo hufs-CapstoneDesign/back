@@ -1,6 +1,32 @@
+# system_prompt.py
+import re
 from datetime import datetime, timezone, timedelta
 
 KST = timezone(timedelta(hours=9))
+
+MEDICATION_TIME_MAP = {
+    1: ["아침"],
+    2: ["아침", "저녁"],
+    3: ["아침", "점심", "저녁"],
+    4: ["아침", "점심", "저녁", "자기 전"],
+}
+
+
+def parse_medication_times(medical_notes: str) -> list[str]:
+    """
+    medical_notes에서 "하루 N회" 패턴을 파싱해 복약 시간대 리스트 반환.
+    파싱 실패 시 기본값 ["아침", "저녁"] 반환.
+    """
+    if not medical_notes:
+        return ["아침", "저녁"]
+
+    match = re.search(r"(?:하루|1일|매일)에?\s*(\d+)\s*(?:회|번|차례)", medical_notes)
+    if match:
+        count = int(match.group(1))
+        return MEDICATION_TIME_MAP.get(count, ["아침", "저녁"])
+
+    return ["아침", "저녁"]
+
 
 def build_system_prompt(patient_profile: dict, call_type: str = "voluntary") -> str:
     now = datetime.now(tz=KST)
@@ -9,6 +35,9 @@ def build_system_prompt(patient_profile: dict, call_type: str = "voluntary") -> 
     name = patient_profile.get("name", "어르신")
     medications = patient_profile.get("medical_notes", "")
     age = patient_profile.get("age", "")
+
+    medication_times = parse_medication_times(medications)
+    medication_times_str = "/".join(medication_times)  # ex) "아침/저녁", "아침/점심/저녁"
 
     base_prompt = f"""당신은 치매 어르신을 돌보는 따뜻한 AI 돌봄 파트너입니다.
 
@@ -29,6 +58,7 @@ def build_system_prompt(patient_profile: dict, call_type: str = "voluntary") -> 
 6. 숫자는 반드시 한국어로 읽어주세요. (예: 4알 → 네 알, 8시 → 여덟 시)"""
 
     if call_type == "scheduled":
+        med_name = medications if medications else "약"
         base_prompt += f"""
 
 [오늘 통화 목표]
@@ -39,8 +69,8 @@ def build_system_prompt(patient_profile: dict, call_type: str = "voluntary") -> 
 ■ 확인 항목 (순서대로):
 1. 감정 상태 → "오늘 기분은 어떠세요?" 형식으로 물어보세요.
 2. 신체 상태 → "오늘 몸은 좀 어떠세요? 아프신 데 있나요?" 형식으로 물어보세요.
-3. 복약 여부 → 반드시 물어보세요. "{medications if medications else '약'} 드셨나요?" 형식으로 물어보세요.
-   - 복약 정보({medications if medications else '정보 없음'})를 참고해서 아침/저녁 각각 확인하세요.
+3. 복약 여부 → 반드시 물어보세요. "{med_name} 드셨나요?" 형식으로 물어보세요.
+   - 복약 정보({medications if medications else "정보 없음"})를 참고해서 {medication_times_str} 각각 확인하세요.
    - 환자가 복약했다고 하면 "잘 하셨어요"라고 격려하세요.
    - 환자가 복약 안 했다고 하면 부드럽게 복약을 권유하세요.
 4. 식사 여부 → "오늘 식사는 하셨나요? 뭐 드셨나요?" 형식으로 물어보세요.
