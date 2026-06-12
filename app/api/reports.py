@@ -1,3 +1,4 @@
+# reports.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,8 @@ from app.api.conversations import resolve_patient_id
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
+_DEFAULT_MEDICATION_TIMES = ["아침", "저녁"]
+
 
 def parse_json_field(field):
     if field is None:
@@ -17,6 +20,19 @@ def parse_json_field(field):
     if isinstance(field, str):
         return json.loads(field)
     return field
+
+
+def default_medication_slots(medication_summary: list | None) -> list[dict]:
+    """
+    저장된 medication_summary가 있으면 그대로 사용.
+    없으면 기본 시간대(아침/저녁) 기준 빈 슬롯 반환.
+    """
+    if medication_summary:
+        return medication_summary
+    return [
+        {"time": t, "taken": None, "drug_name": None, "confidence": 0.0}
+        for t in _DEFAULT_MEDICATION_TIMES
+    ]
 
 
 def build_report_response(row) -> dict:
@@ -32,11 +48,8 @@ def build_report_response(row) -> dict:
             {"time": "저녁", "eaten": None, "menu": None, "confidence": 0.0},
         ]
 
-    if not medications:
-        medications = [
-            {"time": "아침", "taken": None, "drug_name": None, "confidence": 0.0},
-            {"time": "저녁", "taken": None, "drug_name": None, "confidence": 0.0},
-        ]
+    # medications는 DB에 저장된 슬롯 구조를 그대로 사용
+    medications = default_medication_slots(medications)
 
     return {
         "id": str(row.id),
@@ -76,8 +89,8 @@ def empty_report(date: str) -> dict:
             {"time": "저녁", "eaten": None, "menu": None, "confidence": 0.0},
         ],
         "medications": [
-            {"time": "아침", "taken": None, "drug_name": None, "confidence": 0.0},
-            {"time": "저녁", "taken": None, "drug_name": None, "confidence": 0.0},
+            {"time": t, "taken": None, "drug_name": None, "confidence": 0.0}
+            for t in _DEFAULT_MEDICATION_TIMES
         ],
         "analysis": {
             "physical": {"condition": None, "confidence": 0.0},
