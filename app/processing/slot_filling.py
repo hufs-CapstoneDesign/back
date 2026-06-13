@@ -82,15 +82,46 @@ def build_slot_filling_prompt(conversation: str, medication_times: list[str]) ->
 
 
 def compute_avg_confidence(slot_result: dict) -> float:
-    """슬롯 결과 전체에서 언급된 항목의 평균 confidence 계산."""
+    """슬롯 결과 전체에서 언급된 항목의 평균 confidence 계산.
+    
+    [FIXED] analysis, physical, mood가 None 또는 비정규 형식일 때 안전장치 추가
+    """
     scores = []
-    for m in slot_result.get("medications", []):
-        scores.append(m.get("confidence", 0.0))
-    for m in slot_result.get("meals", []):
-        scores.append(m.get("confidence", 0.0))
-    physical_conf = slot_result.get("analysis", {}).get("physical", {}).get("confidence", 0.0)
-    mood_conf = slot_result.get("analysis", {}).get("mood", {}).get("confidence", 0.0)
+    
+    # medications confidence 수집
+    medications = slot_result.get("medications", [])
+    if isinstance(medications, list):
+        for m in medications:
+            if isinstance(m, dict):
+                scores.append(m.get("confidence", 0.0))
+    
+    # meals confidence 수집
+    meals = slot_result.get("meals", [])
+    if isinstance(meals, list):
+        for m in meals:
+            if isinstance(m, dict):
+                scores.append(m.get("confidence", 0.0))
+    
+    # analysis 안전하게 추출 (None 또는 null 체크)
+    analysis = slot_result.get("analysis")
+    if analysis is None or not isinstance(analysis, dict):
+        analysis = {}
+    
+    # physical confidence 추출 (physical이 None 또는 비dict일 때 안전)
+    physical = analysis.get("physical")
+    physical_conf = 0.0
+    if physical is not None and isinstance(physical, dict):
+        physical_conf = physical.get("confidence", 0.0)
+    
+    # mood confidence 추출 (mood가 None 또는 비dict일 때 안전)
+    mood = analysis.get("mood")
+    mood_conf = 0.0
+    if mood is not None and isinstance(mood, dict):
+        mood_conf = mood.get("confidence", 0.0)
+    
     scores.extend([physical_conf, mood_conf])
+    
+    # 0.0 초과인 스코어만 평균 계산
     non_zero = [s for s in scores if s > 0.0]
     return round(sum(non_zero) / len(non_zero), 3) if non_zero else 0.0
 
@@ -112,6 +143,20 @@ async def save_slot_result(
     slot_result: dict,
 ) -> None:
     async with AsyncSessionLocal() as db:
+        # [FIXED] analysis, physical, mood 안전 추출
+        analysis = slot_result.get("analysis")
+        if analysis is None or not isinstance(analysis, dict):
+            analysis = {}
+        
+        physical = analysis.get("physical")
+        if physical is None or not isinstance(physical, dict):
+            physical = {}
+        
+        mood = analysis.get("mood")
+        mood_status = None
+        if mood is not None and isinstance(mood, dict):
+            mood_status = mood.get("status")
+        
         await db.execute(text("""
             INSERT INTO slot_results
                 (id, patient_id, session_id,
@@ -135,8 +180,8 @@ async def save_slot_result(
             "session_id": session_id,
             "medication": json.dumps(slot_result.get("medications", []), ensure_ascii=False),
             "meal": json.dumps(slot_result.get("meals", []), ensure_ascii=False),
-            "physical": json.dumps(slot_result.get("analysis", {}).get("physical", {}), ensure_ascii=False),
-            "emotion": slot_result.get("analysis", {}).get("mood", {}).get("status"),
+            "physical": json.dumps(physical, ensure_ascii=False),
+            "emotion": mood_status,
             "call_summary": json.dumps(slot_result.get("call_summary_sections", {}), ensure_ascii=False),
             "confidence": compute_avg_confidence(slot_result),
             "source": "direct",
