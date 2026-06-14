@@ -14,10 +14,15 @@ MEDICATION_TIME_MAP = {
 def parse_medication_times(medical_notes: str) -> list[str]:
     """
     medical_notes에서 "하루 N회" 패턴을 파싱해 복약 시간대 리스트 반환.
+    "안 함", "안함", "0회" 등 복약을 하지 않는 정보일 경우 빈 리스트 반환.
     파싱 실패 시 기본값 ["아침", "저녁"] 반환.
     """
     if not medical_notes:
         return ["아침", "저녁"]
+
+    # "안 함", "0회" 등의 명시적 비복약 표현 처리
+    if any(x in medical_notes.replace(" ", "") for x in ["안함", "0회", "안하고있음", "하지않음"]):
+        return []
 
     match = re.search(r"(?:하루|1일|매일)에?\s*(\d+)\s*(?:회|번|차례)", medical_notes)
     if match:

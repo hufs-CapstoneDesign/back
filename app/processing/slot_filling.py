@@ -24,7 +24,11 @@ _SLOT_FILLING_PROMPT_TEMPLATE = """다음은 치매 환자와 AI의 대화입니
 6. 식사는 아침/점심/저녁 3끼 기준입니다.
 7. "taken: null"은 대화에서 해당 시간대 복약을 확인하지 못한 것입니다. false와 다릅니다.
 8. AI가 복약을 물어봤는데 환자가 답하지 않은 경우도 null입니다.
-9. call_summary_sections 작성 기준:
+9. 식사 메뉴는 menu_candidates 배열에 저장하며, 확실성 여부를 menu_certain 플래그로 표시합니다.
+- 환자가 먹었다고 언급한 메뉴가 특정 메뉴로 확실하면 menu_candidates에 해당 메뉴명을 넣고 menu_certain은 true로 하세요. (예: "미역국 먹었어" -> menu_candidates: ["미역국"], menu_certain: true)
+- 메뉴를 여러 개 언급하거나 번복/불확실(예: "빵 하나 먹었나? 피자 먹은 것 같기도 하고...")하면 menu_candidates에 모든 후보를 배열로 넣고 menu_certain은 false로 하세요. (예: menu_candidates: ["빵", "피자"], menu_certain: false)
+- 식사 언급이 전혀 없거나 메뉴를 모르는 경우 menu_candidates는 빈 배열 []로 하고 menu_certain은 true로 하세요.
+10. call_summary_sections 작성 기준:
 - 환자의 발화를 그대로 반영하세요.
 - "~한 것 같아", "~인가?" 등 불확실 표현이 있으면 요약에도 반드시 불확실성을 포함하세요.
   예) "먹은 것 같다고 말함" (O) / "먹었다고 언급함" (X)
@@ -33,9 +37,9 @@ _SLOT_FILLING_PROMPT_TEMPLATE = """다음은 치매 환자와 AI의 대화입니
 [출력 형식] JSON만 출력, 다른 텍스트 없이.
 {{
   "meals": [
-    {{"time": "아침", "eaten": true | false | null, "menu": "메뉴 또는 null", "confidence": 0.0}},
-    {{"time": "점심", "eaten": true | false | null, "menu": "메뉴 또는 null", "confidence": 0.0}},
-    {{"time": "저녁", "eaten": true | false | null, "menu": "메뉴 또는 null", "confidence": 0.0}}
+    {{"time": "아침", "eaten": true | false | null, "menu_candidates": ["메뉴후보"], "menu_certain": true | false, "confidence": 0.0}},
+    {{"time": "점심", "eaten": true | false | null, "menu_candidates": ["메뉴후보"], "menu_certain": true | false, "confidence": 0.0}},
+    {{"time": "저녁", "eaten": true | false | null, "menu_candidates": ["메뉴후보"], "menu_certain": true | false, "confidence": 0.0}}
   ],
   "medications": [
 {medication_slots}
@@ -78,15 +82,46 @@ def build_slot_filling_prompt(conversation: str, medication_times: list[str]) ->
 
 
 def compute_avg_confidence(slot_result: dict) -> float:
-    """슬롯 결과 전체에서 언급된 항목의 평균 confidence 계산."""
+    """슬롯 결과 전체에서 언급된 항목의 평균 confidence 계산.
+    
+    [FIXED] analysis, physical, mood가 None 또는 비정규 형식일 때 안전장치 추가
+    """
     scores = []
-    for m in slot_result.get("medications", []):
-        scores.append(m.get("confidence", 0.0))
-    for m in slot_result.get("meals", []):
-        scores.append(m.get("confidence", 0.0))
-    physical_conf = slot_result.get("analysis", {}).get("physical", {}).get("confidence", 0.0)
-    mood_conf = slot_result.get("analysis", {}).get("mood", {}).get("confidence", 0.0)
+    
+    # medications confidence 수집
+    medications = slot_result.get("medications", [])
+    if isinstance(medications, list):
+        for m in medications:
+            if isinstance(m, dict):
+                scores.append(m.get("confidence", 0.0))
+    
+    # meals confidence 수집
+    meals = slot_result.get("meals", [])
+    if isinstance(meals, list):
+        for m in meals:
+            if isinstance(m, dict):
+                scores.append(m.get("confidence", 0.0))
+    
+    # analysis 안전하게 추출 (None 또는 null 체크)
+    analysis = slot_result.get("analysis")
+    if analysis is None or not isinstance(analysis, dict):
+        analysis = {}
+    
+    # physical confidence 추출 (physical이 None 또는 비dict일 때 안전)
+    physical = analysis.get("physical")
+    physical_conf = 0.0
+    if physical is not None and isinstance(physical, dict):
+        physical_conf = physical.get("confidence", 0.0)
+    
+    # mood confidence 추출 (mood가 None 또는 비dict일 때 안전)
+    mood = analysis.get("mood")
+    mood_conf = 0.0
+    if mood is not None and isinstance(mood, dict):
+        mood_conf = mood.get("confidence", 0.0)
+    
     scores.extend([physical_conf, mood_conf])
+    
+    # 0.0 초과인 스코어만 평균 계산
     non_zero = [s for s in scores if s > 0.0]
     return round(sum(non_zero) / len(non_zero), 3) if non_zero else 0.0
 
@@ -108,6 +143,20 @@ async def save_slot_result(
     slot_result: dict,
 ) -> None:
     async with AsyncSessionLocal() as db:
+        # [FIXED] analysis, physical, mood 안전 추출
+        analysis = slot_result.get("analysis")
+        if analysis is None or not isinstance(analysis, dict):
+            analysis = {}
+        
+        physical = analysis.get("physical")
+        if physical is None or not isinstance(physical, dict):
+            physical = {}
+        
+        mood = analysis.get("mood")
+        mood_status = None
+        if mood is not None and isinstance(mood, dict):
+            mood_status = mood.get("status")
+        
         await db.execute(text("""
             INSERT INTO slot_results
                 (id, patient_id, session_id,
@@ -131,8 +180,8 @@ async def save_slot_result(
             "session_id": session_id,
             "medication": json.dumps(slot_result.get("medications", []), ensure_ascii=False),
             "meal": json.dumps(slot_result.get("meals", []), ensure_ascii=False),
-            "physical": json.dumps(slot_result.get("analysis", {}).get("physical", {}), ensure_ascii=False),
-            "emotion": slot_result.get("analysis", {}).get("mood", {}).get("status"),
+            "physical": json.dumps(physical, ensure_ascii=False),
+            "emotion": mood_status,
             "call_summary": json.dumps(slot_result.get("call_summary_sections", {}), ensure_ascii=False),
             "confidence": compute_avg_confidence(slot_result),
             "source": "direct",
