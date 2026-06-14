@@ -92,7 +92,13 @@ async def voice_websocket(
                 print("배치 처리 타임아웃")
 
     async def call_stt():
-        await vito_streaming_stt(audio_queue, text_queue, stop_event, is_speaking)
+        try:
+            await vito_streaming_stt(audio_queue, text_queue, stop_event, is_speaking)
+        except Exception as e:
+            print(f"STT 오류: {e}")
+        finally:
+            await text_queue.put(None)
+            print("[STT] 강제 EOS 센티널 전송")
 
     async def call_pipeline():
         if call_type == "scheduled":
@@ -217,14 +223,19 @@ async def voice_websocket(
             finally:
                 is_speaking.clear()
                 drained = 0
+                temp_none = False
                 while not text_queue.empty():
-                    stale = text_queue.get_nowait()
-                    if stale is None:
-                        # EOS 센티널은 다시 넣어줌
-                        await text_queue.put(None)
+                    try:
+                        stale = text_queue.get_nowait()
+                        if stale is None:
+                            temp_none = True
+                        else:
+                            drained += 1
+                            print(f"[drain] 잔여 텍스트 제거: {stale}")
+                    except asyncio.QueueEmpty:
                         break
-                    drained += 1
-                    print(f"[drain] 잔여 텍스트 제거: {stale}")
+                if temp_none:
+                    await text_queue.put(None)
                 if drained:
                     print(f"[drain] 총 {drained}개 항목 제거")
 
