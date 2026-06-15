@@ -2,6 +2,7 @@ import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+from starlette.websockets import WebSocketState
 
 from app.database import get_db
 from app.pipeline.stt import vito_streaming_stt
@@ -77,6 +78,20 @@ async def voice_websocket(
 
     conversation_history = []
 
+    async def safe_send_text(text: str):
+        if websocket.client_state == WebSocketState.CONNECTED:
+            try:
+                await websocket.send_text(text)
+            except Exception:
+                pass
+
+    async def safe_send_bytes(data: bytes):
+        if websocket.client_state == WebSocketState.CONNECTED:
+            try:
+                await websocket.send_bytes(data)
+            except Exception:
+                pass
+
     async def receive_audio():
         try:
             while True:
@@ -96,7 +111,6 @@ async def voice_websocket(
             await vito_streaming_stt(audio_queue, text_queue, stop_event, is_speaking)
         except Exception as e:
             print(f"STT 오류: {e}")
-        finally:
             await text_queue.put(None)
             print("[STT] 강제 EOS 센티널 전송")
 
@@ -123,10 +137,10 @@ async def voice_websocket(
                     first_chunk = True
                     async for audio_chunk in stream_tts(sentence):
                         if first_chunk:
-                            await websocket.send_text(sentence)
+                            await safe_send_text(sentence)
                             first_chunk = False
-                        await websocket.send_bytes(audio_chunk)
-                    await websocket.send_text("SENTENCE_END")
+                        await safe_send_bytes(audio_chunk)
+                    await safe_send_text("SENTENCE_END")
                 except Exception as e:
                     print(f"TTS 오류: {e}")
 
@@ -139,7 +153,7 @@ async def voice_websocket(
 
             is_speaking.set()
             if raw_text != "__GREETING__":
-                await websocket.send_text("MIC_OFF")
+                await safe_send_text("MIC_OFF")
             print(f"파이프라인 실행: {raw_text}")
 
             try:
@@ -174,8 +188,11 @@ async def voice_websocket(
                     await tts_queue.put(sentence_buffer.strip())
 
                 await tts_queue.put("__TURN_END__")
-                await turn_done_event.wait()
-
+                try:
+                    await asyncio.wait_for(turn_done_event.wait(), timeout=30)
+                except asyncio.TimeoutError:
+                    print("[파이프라인] TTS 완료 대기 타임아웃")
+                    
                 ai_response = "".join(ai_response_tokens)
 
                 if raw_text != "__GREETING__":
@@ -215,11 +232,11 @@ async def voice_websocket(
                 })
 
                 print("생성된 답변:", ai_response)
-                await websocket.send_text("MIC_ON")
+                await safe_send_text("MIC_ON")
 
             except Exception as e:
                 print(f"파이프라인 오류: {e}")
-                await websocket.send_text("MIC_ON")
+                await safe_send_text("MIC_ON")
             finally:
                 is_speaking.clear()
                 drained = 0
